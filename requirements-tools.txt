@@ -1,0 +1,8 @@
+# Optional wrapped OSINT tools. Installed into a private venv by the
+# in-app ARSENAL screen or by install_tools.sh — not into UNISINT's own env.
+sherlock-project
+maigret
+holehe
+socialscan
+ignorant
+theHarvester

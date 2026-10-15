@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNISINT // console</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<canvas id="matrix"></canvas>
+<div id="scanlines"></div>
+
+<!-- BOOT -->
+<div id="boot" class="boot">
+  <pre id="boot-log"></pre>
+</div>
+
+<!-- AUTHORIZATION GATE -->
+<div id="gate" class="modal hidden">
+  <div class="modal-box">
+    <h2>// AUTHORIZED USE ONLY</h2>
+    <p>UNISINT aggregates <b>public</b> information. Use it only to:</p>
+    <ul>
+      <li><b>SELF-AUDIT</b> — assess your own digital footprint, or</li>
+      <li><b>RECON</b> — assess assets (domains / IPs) you own or are
+          explicitly contracted to test.</li>
+    </ul>
+    <p>Investigating a third party without authorization may be illegal and
+       is not what this tool is for.</p>
+    <label class="chk">
+      <input type="checkbox" id="auth-chk">
+      I confirm I own, or am authorized to assess, the targets I enter.
+    </label>
+    <button id="auth-ok" class="btn big" disabled>ACKNOWLEDGE &amp; ENTER</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <div class="brand">UNI<span>SINT</span><em>v1.0</em></div>
+    <nav class="tabs">
+      <button class="tab active" data-view="graph">GRAPH</button>
+      <button class="tab" data-view="dossier">DOSSIER</button>
+      <button class="tab" data-view="map">MAP</button>
+      <button class="tab" data-view="arsenal">ARSENAL</button>
+      <button class="tab" data-view="settings">SETTINGS</button>
+    </nav>
+    <div class="status" id="status">IDLE</div>
+  </header>
+
+  <section class="control">
+    <div class="mode-switch">
+      <button class="mode active" data-mode="self">SELF-AUDIT</button>
+      <button class="mode" data-mode="recon">RECON</button>
+    </div>
+    <div class="input-wrap">
+      <input id="target" placeholder="paste a username, email, phone, domain, IP — or drop an image">
+      <span id="type-tag" class="type-tag">?</span>
+    </div>
+    <select id="preset" title="scan depth">
+      <option value="quick">QUICK</option>
+      <option value="standard" selected>STANDARD</option>
+      <option value="deep">DEEP</option>
+    </select>
+    <button id="engage" class="btn big">ENGAGE</button>
+    <button id="cancel" class="btn danger hidden">ABORT</button>
+    <input type="file" id="imgfile" accept="image/*" class="hidden">
+  </section>
+
+  <main class="grid">
+    <!-- terminal -->
+    <div class="panel term-panel">
+      <div class="panel-h">LIVE FEED</div>
+      <div id="terminal" class="terminal"></div>
+    </div>
+
+    <!-- views -->
+    <div class="panel view-panel">
+      <div id="view-graph" class="view active">
+        <canvas id="graph"></canvas>
+        <div id="nodeinfo" class="nodeinfo hidden"></div>
+      </div>
+
+      <div id="view-dossier" class="view">
+        <div class="dossier-head">
+          <div class="exposure" id="exposure">0</div>
+          <div class="exposure-lbl">SIGNALS</div>
+          <div class="risk" id="risk"></div>
+          <div class="spacer"></div>
+          <button id="export-json" class="btn sm">EXPORT JSON</button>
+          <button id="export-html" class="btn sm">REPORT</button>
+        </div>
+        <div id="dossier" class="dossier"></div>
+      </div>
+
+      <div id="view-map" class="view">
+        <div id="map"></div>
+      </div>
+
+      <div id="view-arsenal" class="view">
+        <div class="arsenal-head">
+          TOOL ARSENAL
+          <button id="refresh-arsenal" class="btn sm">REFRESH</button>
+        </div>
+        <div id="arsenal" class="arsenal"></div>
+      </div>
+
+      <div id="view-settings" class="view">
+        <h3>API KEYS <small>(optional — stored locally in ~/.unisint)</small></h3>
+        <div id="keys" class="keys"></div>
+        <button id="save-keys" class="btn sm">SAVE</button>
+        <h3>EFFECTS</h3>
+        <label class="chk"><input type="checkbox" id="fx-toggle" checked> matrix / CRT effects</label>
+        <h3>SAVED CASES</h3>
+        <div id="cases" class="cases"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/matrix.js"></script>
+<script src="/graph.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
