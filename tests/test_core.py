@@ -1,9 +1,7 @@
 """Unit tests: detection, name permutation, phone, synthesis, parsers."""
 import asyncio
 import csv
-import json
 
-import pytest
 
 from unisint import base
 from unisint.detect import detect
@@ -109,17 +107,36 @@ def test_synthesis_dossier():
     snap = {
         "mode": "self",
         "entities": [
-            {"type": "account", "value": "https://github.com/u", "source": "github",
-             "confidence": 0.9, "meta": {"site": "GitHub", "url": "https://github.com/u", "sources": ["github"]}},
-            {"type": "email", "value": "u@x.com", "source": "github",
-             "confidence": 0.8, "meta": {"note": "exposed in public commits"}},
-            {"type": "metadata", "value": "CVE: CVE-2021-1", "source": "internetdb",
-             "confidence": 0.7, "meta": {"cve": "CVE-2021-1"}},
+            {"id": "s1", "type": "username", "value": "u", "source": "input",
+             "basis": "seed", "meta": {"identity_link": "seed"}, "provenance": [{}]},
+            {"id": "a1", "type": "account", "value": "https://github.com/u", "source": "github",
+             "basis": "observed", "meta": {"site": "GitHub", "url": "https://github.com/u",
+                                            "identity_link": "handle_match", "sources": ["github"]},
+             "provenance": [{"parent_id": "s1", "parent_value": "u", "rel": "account_of"}]},
+            {"id": "e1", "type": "email", "value": "u@x.com", "source": "github",
+             "basis": "observed", "meta": {"note": "exposed in public commits",
+                                            "identity_link": "weak"},
+             "provenance": [{"parent_id": "s1"}]},
+            {"id": "m1", "type": "metadata", "value": "CVE: CVE-2021-1", "source": "internetdb",
+             "basis": "observed", "meta": {"cve": "CVE-2021-1"}, "provenance": [{}]},
         ],
         "links": [],
     }
     d = build_dossier(snap)
-    assert d["exposure_count"] == 1
-    assert "u@x.com" in d["emails"]
+    assert d["counts"]["accounts"] == 1
+    assert d["account_groups"]["handle_match"][0]["url"] == "https://github.com/u"
+    assert [i["value"] for i in d["identifiers"]["email"]] == ["u@x.com"]
     assert any("commit" in r for r in d["risk_flags"])
     assert any("CVE" in r for r in d["risk_flags"])
+
+
+def test_every_subpackage_is_packaged():
+    """Regression: unisint.search was missing from pyproject's package list."""
+    import pathlib
+    import re as _re
+    root = pathlib.Path(__file__).resolve().parents[1]
+    listed = set(_re.findall(r'"(unisint[\w.]*)"',
+                             (root / "pyproject.toml").read_text().split("packages =")[1].split("]")[0]))
+    actual = {".".join(p.parent.relative_to(root).parts)
+              for p in (root / "unisint").rglob("__init__.py")}
+    assert actual <= listed, f"not packaged: {actual - listed}"

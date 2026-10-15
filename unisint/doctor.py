@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import platform
 import sys
-from typing import Any  # noqa: F401
 
 from . import base, config, toolmanager
 

@@ -70,87 +70,99 @@ def _severity(count_sources: int) -> str:
     return "high" if count_sources >= 2 else "medium"
 
 
+def _advice_for(site: str, url: str) -> dict:
+    key = (site or "").lower()
+    host = (url or "").split("//")[-1].split("/")[0].lower()
+    for known, a in SITE_ADVICE.items():
+        if known in key or known in host:
+            return a
+    return GENERIC_ACCOUNT
+
+
+STRONG = {"seeded", "linked_proof", "linked_profile", "corroborated_handle"}
+
+
 def build_remediation(dossier: dict[str, Any]) -> list[dict[str, Any]]:
-    """Produce an ordered list of {title, action, url, severity} steps."""
+    """Ordered {title, action, url, severity[, links]} steps from evidence."""
     steps: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    # 1. Accounts -> lock down / delete.
+    # 1. Accounts. Confirmed/corroborated ones get direct advice; handle
+    #    matches are phrased conditionally — they may be someone else's.
     for acc in dossier.get("accounts", []):
-        site = (acc.get("site") or "").strip()
-        url = acc.get("url", "")
-        key = site.lower()
+        site, url = acc.get("site") or "", acc.get("url") or acc.get("value", "")
+        label = (acc.get("assessment") or {}).get("label", "handle_match")
         host = url.split("//")[-1].split("/")[0].lower()
-        advice = None
-        for known, a in SITE_ADVICE.items():
-            if known in key or known in host:
-                advice = a
-                break
-        advice = advice or GENERIC_ACCOUNT
-        dedupe = f"acct:{key or host}"
-        if dedupe in seen:
+        key = f"acct:{(site or host).lower()}"
+        if key in seen or label == "candidate":
             continue
-        seen.add(dedupe)
+        seen.add(key)
+        advice = _advice_for(site, url)
+        strong = label in STRONG
         steps.append({
-            "title": f"Lock down / review your {site or host} account",
-            "action": advice["action"],
+            "title": (f"Lock down / review your {site or host} account" if strong
+                      else f"If {url} is yours: lock it down or delete it"),
+            "action": advice["action"] if strong else
+            ("This is only a handle match — it may belong to someone else. "
+             "If it is yours: " + advice["action"]),
             "url": advice["url"] or url,
-            "severity": "medium",
+            "severity": "medium" if strong else "low",
         })
 
-    # 2. Email exposed in public commits -> rotate.
-    for f in dossier.get("findings", []):
-        meta = f.get("meta") or {}
-        if meta.get("note") and "commit" in str(meta.get("note")).lower():
-            steps.append({
-                "title": "Rotate the email address exposed in public commits",
-                "action": "Set a noreply commit email "
-                          "(`git config --global user.email "
-                          "ID+user@users.noreply.github.com`), enable "
-                          "'Block command line pushes that expose my email', "
-                          "and rewrite history only if necessary.",
-                "url": "https://docs.github.com/en/account-and-profile/"
-                       "setting-up-and-managing-your-personal-account-on-github/"
-                       "managing-email-preferences/setting-your-commit-email-address",
-                "severity": "high",
-            })
-            break
+    # 2. Registrations found for your email/phone (holehe/ignorant).
+    for reg in dossier.get("registrations", []):
+        dom = (reg.get("meta") or {}).get("domain")
+        if not dom or f"reg:{dom}" in seen:
+            continue
+        seen.add(f"reg:{dom}")
+        steps.append({
+            "title": f"Account registered on {dom}",
+            "action": "If you no longer use it, delete it; otherwise enable 2FA "
+                      "and check the recovery email/phone are current.",
+            "url": f"https://{dom}", "severity": "low",
+        })
 
-    # 3. GPS in image metadata -> scrub.
-    has_gps = any(
-        isinstance((f.get("meta") or {}), dict) and ("lat" in (f.get("meta") or {}))
-        for f in dossier.get("findings", [])
-    ) or any("," in loc and loc.replace(",", "").replace(".", "").replace("-", "").isdigit()
-             for loc in dossier.get("locations", []))
-    if has_gps:
+    # 3. Emails seen in public commit metadata.
+    leaked = [i for i in (dossier.get("identifiers") or {}).get("email", [])
+              if (i.get("meta") or {}).get("note")]
+    if leaked:
+        steps.append({
+            "title": "Email address visible in public commit metadata",
+            "action": "If any of these are yours: set a noreply commit email "
+                      "(`git config --global user.email ID+user@users.noreply."
+                      "github.com`) and enable 'Block command line pushes that "
+                      "expose my email'. Seen: " + ", ".join(i["value"] for i in leaked[:5]),
+            "url": "https://docs.github.com/en/account-and-profile/"
+                   "setting-up-and-managing-your-personal-account-on-github/"
+                   "managing-email-preferences/setting-your-commit-email-address",
+            "severity": "high",
+        })
+
+    # 4. GPS in photo metadata.
+    if any(l.get("source") in ("exif", "exiftool") and "lat" in (l.get("meta") or {})
+           for l in dossier.get("locations", [])):
         steps.append({
             "title": "Strip location metadata from photos before sharing",
             "action": "Your image carried GPS coordinates. Remove EXIF with "
                       "`exiftool -gps:all= -xmp:geolocation= FILE`, and disable "
                       "location tagging in your camera app.",
-            "url": "",
-            "severity": "high",
+            "url": "", "severity": "high",
         })
 
-    # 4. Emails surfaced anywhere -> general hygiene + broker opt-out.
-    if dossier.get("emails"):
+    # 5. Email hygiene when an email was in scope of the audit.
+    if any(s["type"] == "email" for s in dossier.get("seeds", [])):
         steps.append({
             "title": "Reduce email exposure",
-            "action": "Use address aliases for signups, enable breach "
-                      "monitoring, and turn on 2FA everywhere this address is "
-                      "used.",
-            "url": "https://haveibeenpwned.com/",
-            "severity": "medium",
+            "action": "Use aliases for sign-ups, enable breach monitoring, and "
+                      "turn on 2FA wherever this address is used.",
+            "url": "https://haveibeenpwned.com/", "severity": "medium",
         })
 
-    # 5. Always-on: data-broker opt-outs for self-audit.
+    # 6. Always: data-broker opt-outs (generic starting points, not results).
     steps.append({
         "title": "File data-broker / people-search opt-outs",
-        "action": "People-search sites aggregate public records about you. "
-                  "Submit removal requests at the brokers listed.",
-        "url": "",
-        "severity": "medium",
-        "links": DATA_BROKERS,
+        "action": "People-search sites aggregate public records. These are "
+                  "generic starting points — UNISINT did not query them.",
+        "url": "", "severity": "medium", "links": DATA_BROKERS,
     })
-
     return steps

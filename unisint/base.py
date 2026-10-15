@@ -7,7 +7,7 @@ identically.
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable, Iterable
+from typing import Callable
 
 from .models import Entity, EntityType
 

@@ -2,7 +2,6 @@
 image-search links. Operates on a locally uploaded file path."""
 from __future__ import annotations
 
-import urllib.parse
 
 from ..base import MODE_SELF, Context, Module, register
 from ..models import EntityType
@@ -62,7 +61,6 @@ class ExifImage(Module):
                           "map": f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=16/{lat}/{lon}"})
 
         # Reverse image search links (manual; no auto-upload).
-        fname = urllib.parse.quote(ctx.entity.value)
         links = [
             {"name": "Google Lens", "url": "https://lens.google.com/"},
             {"name": "Yandex", "url": "https://yandex.com/images/"},

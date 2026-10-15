@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unisint"
-version = "1.1.0"
+version = "2.0.0"
 description = "Unified OSINT console for self-audit and authorized recon, with a movie-hacker web UI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,7 +40,7 @@ dev = ["pytest>=8.0"]
 unisint = "unisint.__main__:main"
 
 [tool.setuptools]
-packages = ["unisint", "unisint.adapters", "unisint.native"]
+packages = ["unisint", "unisint.adapters", "unisint.native", "unisint.search"]
 
 [tool.setuptools.package-data]
 unisint = ["static/*"]

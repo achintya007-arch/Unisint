@@ -6,10 +6,10 @@ import asyncio
 
 import pytest
 
-from unisint import base, pivot
+from unisint import base
 from unisint.base import MODE_RECON, MODE_SELF, Module
 from unisint.engine import Engine
-from unisint.models import Basis, Entity, EntityType
+from unisint.models import Entity, EntityType
 from unisint.pivot import Limits, Scope, decide
 
 
@@ -278,3 +278,32 @@ def test_module_status_not_credited_with_concurrent_modules_findings():
         asyncio.run(e.run())
     assert e.module_status["slowfind"]["state"] == "ok"
     assert e.module_status["nothing"]["state"] == "empty"
+
+
+def test_engine_corroboration_through_merged_seed():
+    """Real path: the profile lists an email that is also a seed, so the
+    observation merges into the seed entity. Corroboration must still be found
+    via the seed's provenance records."""
+    from unisint.synthesis import build_dossier
+
+    class FakeGH(Module):
+        name, label, category = "github", "GH", "username"
+        accepts = {EntityType.USERNAME}
+        modes = {MODE_SELF}
+
+        async def run(self, ctx):
+            ctx.add_entity(EntityType.ACCOUNT, "https://github.com/ada", source=self.name,
+                           rel="account_of", identity_link="handle_match",
+                           meta={"site": "GitHub", "url": "https://github.com/ada"})
+            ctx.add_entity(EntityType.EMAIL, "Ada@Corp.com", source=self.name,
+                           rel="listed_on_profile", identity_link="handle_profile")
+
+    with _Registry([FakeGH()]):
+        e = make_engine()
+        e.add_entity(EntityType.USERNAME, "ada", source="input")
+        e.add_entity(EntityType.EMAIL, "ada@corp.com", source="input")
+        asyncio.run(e.run())
+    snap = e.snapshot()
+    d = build_dossier(snap)
+    acc = d["accounts"][0]
+    assert acc["assessment"]["label"] == "corroborated_handle", acc["assessment"]

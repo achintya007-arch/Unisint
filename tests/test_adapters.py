@@ -1,6 +1,5 @@
 """Adapter parsers against realistic captured output, arg safety, discovery."""
 import json
-import os
 import stat
 
 import pytest

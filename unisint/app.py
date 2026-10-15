@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from pathlib import Path
 
@@ -93,6 +92,33 @@ async def set_config(payload: dict) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.post("/api/dossier")
+async def dossier_preview(payload: dict) -> JSONResponse:
+    """Build a dossier from a (live, partial) snapshot. The UI uses this so the
+    server remains the single dossier builder for display and export."""
+    snap = {"mode": payload.get("mode", "self"),
+            "entities": payload.get("entities") or [],
+            "pivots": payload.get("pivots") or [],
+            "scope": payload.get("scope"),
+            "module_status": payload.get("module_status") or {}}
+    return JSONResponse(build_dossier(snap))
+
+
+@app.post("/api/export/{fmt}")
+async def export(fmt: str, payload: dict):
+    from fastapi.responses import Response
+
+    from .report import render_csv, render_html
+    d = payload.get("dossier") or {}
+    if fmt == "csv":
+        return Response(render_csv(d), media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=unisint-evidence.csv"})
+    if fmt == "html":
+        return Response(render_html(d), media_type="text/html",
+                        headers={"Content-Disposition": "attachment; filename=unisint-dossier.html"})
+    return JSONResponse({"error": "unknown format"}, status_code=400)
+
+
 @app.post("/api/gap")
 async def report_gap(payload: dict) -> JSONResponse:
     rec = config.add_gap(
@@ -161,7 +187,7 @@ async def ws(sock: WebSocket) -> None:
     for t in targets:
         if isinstance(t, dict):  # {"type":..,"value":..,"path":..}
             etype = EntityType(t["type"])
-            ent = engine.add_entity(etype, t["value"], source="input",
+            engine.add_entity(etype, t["value"], source="input",
                                     confidence=1.0,
                                     meta={"path": t.get("path")} if t.get("path") else {})
         else:

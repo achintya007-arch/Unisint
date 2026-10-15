@@ -5,8 +5,7 @@ import json
 import httpx
 import pytest
 
-from unisint.search import (extract_domain_evidence, merge_results, run_search,
-                            term_in_result)
+from unisint.search import extract_domain_evidence, run_search, term_in_result
 from unisint.search.providers import (BraveProvider, FixtureProvider,
                                       GoogleCSEProvider, SearXNGProvider,
                                       configured_providers)

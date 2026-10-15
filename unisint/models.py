@@ -10,7 +10,7 @@ import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class EntityType(str, Enum):

@@ -1,18 +1,36 @@
 // UNISINT console controller.
+// Security: all untrusted text (tool output, search snippets, URLs) is
+// rendered via textContent; links are built with safeLink(), which only
+// accepts http(s) URLs. No untrusted data ever reaches innerHTML.
 (function () {
   const $ = s => document.querySelector(s);
   const el = (t, c, txt) => { const n = document.createElement(t); if (c) n.className = c; if (txt != null) n.textContent = txt; return n; };
 
-  let MODE = 'self', GRAPH = null, DOSSIER = null, SNAP = { entities: [], links: [] };
-  let ws = null, UPLOAD = null;
+  let MODE = 'self', GRAPH = null, DOSSIER = null;
+  let SNAP = { entities: [], links: [], pivots: [] };
+  let ws = null, UPLOAD = null, FINAL = false;
 
-  /* ---------- BOOT SEQUENCE ---------- */
+  function safeHref(u) {
+    if (typeof u !== 'string') return null;
+    try { const x = new URL(u); return (x.protocol === 'http:' || x.protocol === 'https:') ? x.href : null; }
+    catch { return null; }
+  }
+  function safeLink(url, text, cls) {
+    const href = safeHref(url);
+    if (!href) return el('span', 'nolink', text || url || '');
+    const a = el('a', cls || null, text || href);
+    a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    return a;
+  }
+  const badge = (txt, cls, title) => { const b = el('span', 'badge ' + (cls || ''), txt); if (title) b.title = title; return b; };
+
+  /* ---------- BOOT ---------- */
   const BOOT = [
-    'UNISINT BIOS v1.0 .... OK',
-    'loading entity engine ................ OK',
-    'mounting adapter bus ................. OK',
-    'calibrating link graph ............... OK',
-    'arming matrix renderer ............... OK',
+    'UNISINT v2.0 .... OK',
+    'loading evidence engine .............. OK',
+    'arming SSRF guard .................... OK',
+    'loading pivot policy ................. OK',
+    'health-checking adapters ............. OK',
     '',
     '>> UNIFIED OSINT CONSOLE READY',
   ];
@@ -27,54 +45,42 @@
     tick();
   }
   function showGate() { $('#boot').classList.add('hidden'); $('#gate').classList.remove('hidden'); }
-
   $('#auth-chk').addEventListener('change', e => $('#auth-ok').disabled = !e.target.checked);
   $('#auth-ok').addEventListener('click', () => {
-    $('#gate').classList.add('hidden'); $('#app').classList.remove('hidden');
-    initApp();
+    $('#gate').classList.add('hidden'); $('#app').classList.remove('hidden'); initApp();
   });
 
-  /* ---------- APP INIT ---------- */
+  /* ---------- INIT ---------- */
   function initApp() {
     GRAPH = new UnisintGraph($('#graph'));
     GRAPH.onSelect = showNode;
-
-    document.querySelectorAll('.tab').forEach(t =>
-      t.addEventListener('click', () => switchView(t.dataset.view)));
-    document.querySelectorAll('.mode').forEach(m =>
-      m.addEventListener('click', () => {
-        document.querySelectorAll('.mode').forEach(x => x.classList.remove('active'));
-        m.classList.add('active'); MODE = m.dataset.mode;
-        $('#target').placeholder = MODE === 'recon'
-          ? 'domain or IP you own / are authorized to test'
-          : 'your username, email, phone, domain, IP — or drop an image';
-      }));
-
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchView(t.dataset.view)));
+    document.querySelectorAll('.mode').forEach(m => m.addEventListener('click', () => setMode(m.dataset.mode)));
     const inp = $('#target');
     inp.addEventListener('input', debounce(updateTypeTag, 250));
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') engage(); });
-    $('#engage').addEventListener('click', engage);
+    $('#engage').addEventListener('click', () => engage());
     $('#cancel').addEventListener('click', () => ws && ws.send(JSON.stringify({ action: 'cancel' })));
-
-    // image drop
-    const drop = $('#target');
-    ['dragover', 'drop'].forEach(ev => drop.addEventListener(ev, e => e.preventDefault()));
-    drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) uploadImage(f); });
+    ['dragover', 'drop'].forEach(ev => inp.addEventListener(ev, e => e.preventDefault()));
+    inp.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) uploadImage(f); });
     $('#imgfile').addEventListener('change', e => { if (e.target.files[0]) uploadImage(e.target.files[0]); });
-
     $('#export-json').addEventListener('click', exportJSON);
-    $('#export-csv').addEventListener('click', exportCSV);
-    $('#export-html').addEventListener('click', exportHTML);
-    $('#refresh-arsenal').addEventListener('click', loadArsenal);
+    $('#export-csv').addEventListener('click', () => exportServer('csv', 'unisint-evidence.csv'));
+    $('#export-html').addEventListener('click', () => exportServer('html', 'unisint-dossier.html'));
+    $('#refresh-arsenal').addEventListener('click', () => loadArsenal(true));
     $('#save-keys').addEventListener('click', saveKeys);
     $('#fx-toggle').addEventListener('change', e => window.UNISINT_FX.set(e.target.checked));
-
-    // Report-a-gap modal
     $('#report-gap').addEventListener('click', openGap);
     $('#gap-cancel').addEventListener('click', () => $('#gap-modal').classList.add('hidden'));
     $('#gap-save').addEventListener('click', saveGap);
-
-    loadArsenal(); loadConfig();
+    loadArsenal(false); loadConfig();
+  }
+  function setMode(mode) {
+    MODE = mode;
+    document.querySelectorAll('.mode').forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
+    $('#target').placeholder = MODE === 'recon'
+      ? 'domain or IP you own / are authorized to test'
+      : 'your username, email, phone, domain, IP — or drop an image';
   }
 
   async function openGap() {
@@ -85,10 +91,7 @@
     } catch { }
   }
   async function saveGap() {
-    const body = {
-      what: $('#gap-what').value, missing: $('#gap-missing').value,
-      severity: $('#gap-sev').value,
-    };
+    const body = { what: $('#gap-what').value, missing: $('#gap-missing').value, severity: $('#gap-sev').value };
     if (!body.what && !body.missing) { $('#gap-modal').classList.add('hidden'); return; }
     try {
       const d = await (await fetch('/api/gap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
@@ -103,7 +106,6 @@
     document.querySelectorAll('.view').forEach(x => x.classList.toggle('active', x.id === 'view-' + v));
     if (v === 'map') renderMap();
   }
-
   function debounce(fn, ms) { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; }
 
   async function updateTypeTag() {
@@ -114,173 +116,215 @@
       $('#type-tag').textContent = (await r.json()).type.toUpperCase();
     } catch { }
   }
-
   async function uploadImage(file) {
     log('uploading ' + file.name + ' ...', 'run');
     const fd = new FormData(); fd.append('file', file);
-    const r = await fetch('/api/upload', { method: 'POST', body: fd });
-    UPLOAD = await r.json();
+    UPLOAD = await (await fetch('/api/upload', { method: 'POST', body: fd })).json();
     $('#target').value = UPLOAD.name; $('#type-tag').textContent = 'IMAGE';
     log('image staged: ' + UPLOAD.name, 'ok');
   }
 
   /* ---------- SCAN ---------- */
-  function engage() {
-    const v = $('#target').value.trim();
+  function engage(seedValue) {
+    const v = (seedValue || $('#target').value).trim();
     if (!v && !UPLOAD) return;
-    GRAPH.clear(); $('#dossier').innerHTML = ''; $('#terminal').innerHTML = '';
-    SNAP = { entities: [], links: [] };
+    if (seedValue) $('#target').value = seedValue;
+    GRAPH.clear(); $('#dossier').replaceChildren(); $('#terminal').replaceChildren();
+    SNAP = { entities: [], links: [], pivots: [] }; DOSSIER = null; FINAL = false;
     setStatus('run');
     $('#engage').classList.add('hidden'); $('#cancel').classList.remove('hidden');
-
-    let targets;
-    if (UPLOAD && $('#type-tag').textContent === 'IMAGE')
-      targets = [{ type: 'image', value: UPLOAD.name, path: UPLOAD.path }];
-    else targets = [v];
-
+    const targets = (UPLOAD && $('#type-tag').textContent === 'IMAGE')
+      ? [{ type: 'image', value: UPLOAD.name, path: UPLOAD.path }] : [v];
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => ws.send(JSON.stringify({
-      mode: MODE, preset: $('#preset').value, authorized: true, targets
+      mode: MODE, preset: $('#preset').value, authorized: true, targets,
+      validate_links: $('#validate-links').checked,
     }));
     ws.onmessage = ev => handle(JSON.parse(ev.data));
     ws.onclose = () => { setStatus('idle'); $('#engage').classList.remove('hidden'); $('#cancel').classList.add('hidden'); UPLOAD = null; };
     ws.onerror = () => log('socket error', 'err');
   }
 
+  let notExpandedLogged = 0;
   function handle(m) {
-    if (m.type === 'log') log(m.msg, m.level, m.module);
-    else if (m.type === 'entity') { GRAPH.addNode(m.entity); upsert(SNAP.entities, m.entity); bumpExposure(); liveDossier(); }
+    if (m.type === 'log') log(m.msg, m.level);
+    else if (m.type === 'entity') { GRAPH.addNode(m.entity); upsert(SNAP.entities, m.entity); livePreview(); }
     else if (m.type === 'link') { GRAPH.addLink(m.link); SNAP.links.push(m.link); }
+    else if (m.type === 'pivot') { SNAP.pivots.push(m.pivot); }
     else if (m.type === 'done') log(`done — ${m.entities} entities, ${m.links} links`, 'ok');
-    else if (m.type === 'dossier') { DOSSIER = m.dossier; DOSSIER._final = true; renderDossier(); }
+    else if (m.type === 'dossier') { DOSSIER = m.dossier; FINAL = true; renderDossier(); }
   }
   function upsert(arr, e) { const i = arr.findIndex(x => x.id === e.id); if (i >= 0) arr[i] = e; else arr.push(e); }
-  function bumpExposure() {
-    const n = SNAP.entities.filter(e => e.type === 'account').length;
-    $('#exposure').textContent = n;
-  }
+
+  // Live preview: the SERVER builds the dossier (single builder for UI + exports).
+  const livePreview = debounce(async () => {
+    if (FINAL) return;
+    try {
+      const r = await fetch('/api/dossier', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: MODE, entities: SNAP.entities, pivots: SNAP.pivots })
+      });
+      if (!FINAL) { DOSSIER = await r.json(); renderDossier(); }
+    } catch { }
+  }, 800);
 
   /* ---------- TERMINAL ---------- */
-  function log(msg, level = 'info', module = '') {
+  function log(msg, level = 'info') {
     const t = $('#terminal');
     const line = el('div', 'line l-' + level);
-    const ts = new Date().toLocaleTimeString('en-GB');
-    line.innerHTML = `<span class="ts">${ts}</span> ${module ? '' : ''}${escapeHtml(msg)}`;
+    line.appendChild(el('span', 'ts', new Date().toLocaleTimeString('en-GB') + ' '));
+    line.appendChild(document.createTextNode(String(msg)));
     t.appendChild(line); t.scrollTop = t.scrollHeight;
-    while (t.children.length > 600) t.removeChild(t.firstChild);
+    while (t.children.length > 800) t.removeChild(t.firstChild);
   }
-  function escapeHtml(s) { return (s + '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+  function setStatus(s) { const n = $('#status'); n.textContent = s.toUpperCase(); n.classList.toggle('run', s === 'run'); }
 
-  function setStatus(s) {
-    const n = $('#status'); n.textContent = s.toUpperCase();
-    n.classList.toggle('run', s === 'run');
+  /* ---------- EVIDENCE RENDERING ---------- */
+  const VSTATE_CLASS = { reachable: 'v-ok', not_found: 'v-bad', soft_404: 'v-bad', unsafe: 'v-bad', invalid: 'v-bad' };
+  function vBadge(v) {
+    if (!v) return badge('unchecked', 'v-unk', 'link not validated (enable VERIFY LINKS)');
+    return badge(v.state, VSTATE_CLASS[v.state] || 'v-unk', (v.detail || '') + (v.final_url ? ' → ' + v.final_url : ''));
   }
-
-  /* ---------- NODE INFO ---------- */
-  function showNode(d) {
-    const box = $('#nodeinfo');
-    if (!d) { box.classList.add('hidden'); return; }
-    box.classList.remove('hidden');
-    const m = d.meta || {};
-    let html = `<b>${d.type.toUpperCase()}</b><br>${escapeHtml(d.value)}<br>` +
-      `<small>src: ${(m.sources || [d.source]).join(', ')} · conf ${(d.confidence || 0).toFixed(2)}</small>`;
-    if (m.url) html += `<br><a href="${m.url}" target="_blank" rel="noopener">open ↗</a>`;
-    if (m.links) html += '<br>' + m.links.map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.name}</a>`).join(' · ');
-    box.innerHTML = html;
+  const LABEL_CLASS = { seeded: 'l-strong', linked_proof: 'l-strong', linked_profile: 'l-strong',
+    corroborated_handle: 'l-mid', handle_match: 'l-weak', weak: 'l-weak', candidate: 'l-cand' };
+  function whyBox(it) {
+    const a = it.assessment || {}, p = it.provenance || {};
+    const d = el('details', 'why');
+    d.appendChild(el('summary', null, 'why?'));
+    const ul = el('ul');
+    (a.supports || []).forEach(s => ul.appendChild(el('li', 'sup', '+ ' + s)));
+    (a.conflicts || []).forEach(s => ul.appendChild(el('li', 'con', '− ' + s)));
+    (a.unknown || []).forEach(s => ul.appendChild(el('li', 'unk', '? ' + s)));
+    const prov = el('li', 'prov', `sources: ${(p.sources || []).join(', ')} · via ${p.via || '-'} of ${p.parent || '-'}`);
+    ul.appendChild(prov);
+    if (p.source_url) { const li = el('li', 'prov', 'source URL: '); li.appendChild(safeLink(p.source_url)); ul.appendChild(li); }
+    d.appendChild(ul);
+    return d;
   }
-
-  /* ---------- DOSSIER ---------- */
-  // Build a dossier client-side from streamed entities so the panel fills
-  // live; the server's final dossier (with risk flags) refines it.
-  const liveDossier = debounce(() => {
-    if (DOSSIER && DOSSIER._final) return;      // server dossier arrived
-    const by = {};
-    SNAP.entities.forEach(e => (by[e.type] = by[e.type] || []).push(e));
-    const vals = t => (by[t] || []).sort((a, b) => (b.confidence || 0) - (a.confidence || 0)).map(e => e.value);
-    DOSSIER = {
-      names: vals('full_name').slice(0, 8), usernames: vals('username').slice(0, 15),
-      emails: vals('email').slice(0, 15), phones: vals('phone').slice(0, 8),
-      locations: vals('location').slice(0, 10), orgs: vals('org').slice(0, 8),
-      domains: vals('domain').slice(0, 10), hosts: vals('host').slice(0, 100),
-      ips: vals('ip').slice(0, 20),
-      accounts: (by['account'] || []).map(e => ({ site: (e.meta || {}).site || '?', url: (e.meta || {}).url || e.value, confidence: +(e.confidence || 0).toFixed(2) })),
-      findings: (by['metadata'] || []).map(e => ({ text: e.value, source: e.source, meta: e.meta || {}, confidence: +(e.confidence || 0).toFixed(2) })),
-      exposure_count: (by['account'] || []).length, risk_flags: []
-    };
-    renderDossier();
-  }, 300);
+  function itemRow(it, opts = {}) {
+    const row = el('div', 'ev-row');
+    const head = el('div', 'ev-head');
+    if (it.site) head.appendChild(el('span', 'acc-site', it.site));
+    if (it.url) head.appendChild(safeLink(it.url, opts.text || it.url,
+      (it.validation && ['not_found', 'soft_404'].includes(it.validation.state)) ? 'broken' : null));
+    else head.appendChild(el('span', 'ev-val', it.value));
+    if (it.type === 'account' || it.type === 'url') head.appendChild(vBadge(it.validation));
+    const a = it.assessment || {};
+    if (a.title) head.appendChild(badge(a.title, LABEL_CLASS[a.label] || ''));
+    if (a.conflicting) head.appendChild(badge('conflicting evidence', 'l-con'));
+    row.appendChild(head);
+    if (opts.snippet) row.appendChild(el('div', 'snippet', opts.snippet));
+    row.appendChild(whyBox(it));
+    return row;
+  }
+  function group(root, title, nodes, note) {
+    if (!nodes || !nodes.length) return;
+    const g = el('div', 'dgroup');
+    g.appendChild(el('h4', null, `${title} (${nodes.length})`));
+    if (note) g.appendChild(el('div', 'note', note));
+    nodes.forEach(n => g.appendChild(n));
+    root.appendChild(g);
+  }
+  function chips(root, title, arr, note) {
+    if (!arr || !arr.length) return;
+    group(root, title, arr.map(v => el('span', 'chip', v)), note);
+  }
 
   function renderDossier() {
     const d = DOSSIER; if (!d) return;
-    $('#exposure').textContent = d.exposure_count;
-    $('#risk').innerHTML = (d.risk_flags || []).map(r => '⚠ ' + escapeHtml(r)).join('<br>');
-    const root = $('#dossier'); root.innerHTML = '';
+    const c = d.counts || {};
+    $('#exposure').textContent = c.accounts || 0;
+    $('#exposure-lbl').textContent = `ACCOUNTS · ${c.accounts_strong || 0} LINKED`;
+    const risk = $('#risk'); risk.replaceChildren();
+    (d.risk_flags || []).forEach(r => risk.appendChild(el('div', null, '⚠ ' + r)));
+    if (!FINAL) risk.appendChild(el('div', 'note', 'live preview — final dossier when scan completes'));
+    const root = $('#dossier'); root.replaceChildren();
 
-    const chipGroup = (title, arr) => {
-      if (!arr || !arr.length) return;
-      const g = el('div', 'dgroup'); g.appendChild(el('h4', null, title));
-      arr.forEach(v => g.appendChild(el('span', 'chip', v)));
-      root.appendChild(g);
-    };
-    if (d.names && d.names.length) chipGroup('LIKELY NAMES', d.names);
-    chipGroup('USERNAMES', d.usernames);
-    chipGroup('EMAILS', d.emails);
-    chipGroup('PHONES', d.phones);
-    chipGroup('LOCATIONS', d.locations);
-    chipGroup('ORGANIZATIONS', d.orgs);
-    chipGroup('DOMAINS', d.domains);
-    chipGroup('HOSTS / SUBDOMAINS', d.hosts);
-    chipGroup('IP ADDRESSES', d.ips);
+    chips(root, 'SEEDS', (d.seeds || []).map(s => `${s.type}: ${s.value}`));
+    Object.entries(d.account_groups || {}).forEach(([label, items]) =>
+      group(root, 'ACCOUNTS — ' + (items[0].assessment.title || label).toUpperCase(), items.map(i => itemRow(i)),
+        label === 'handle_match' ? 'Same handle on another site. That alone is not proof it is the same person.' : null));
+    group(root, 'LINKS LISTED ON PROFILES', (d.linked_urls || []).map(i => itemRow(i)));
+    group(root, 'REGISTRATIONS', (d.registrations || []).map(r => el('div', 'ev-row', `${r.value}  [${(r.provenance.sources || []).join(', ')}]`)),
+      'The tool reports the email/phone is registered on this site. No profile URL is known, so none is shown.');
+    Object.entries(d.identifiers || {}).forEach(([t, items]) =>
+      group(root, t.toUpperCase() + 'S FOUND', items.map(i => itemRow(i))));
+    group(root, 'NAMES SHOWN ON PROFILES', (d.names_on_profiles || []).map(n => el('div', 'ev-row', `${n.name} — on ${n.on}`)),
+      'Display names observed on profiles. Names are common and are not evidence of identity.');
+    const inf = d.infrastructure || {};
+    chips(root, 'IN-SCOPE HOSTS', inf.in_scope_hosts);
+    chips(root, 'IPS', inf.ips);
+    chips(root, 'OUT-OF-SCOPE HOSTS (recorded only, never probed)', inf.out_of_scope_hosts);
+    chips(root, 'CANDIDATE HOSTS (from search results, unverified)', inf.candidate_hosts);
+    group(root, 'SEARCH RESULTS — CANDIDATES', (d.search_results || []).map(i =>
+      itemRow(i, { text: (i.meta && i.meta.title) || i.url, snippet: `${(i.meta && i.meta.snippet) || ''}  [${((i.meta && i.meta.providers) || []).join(', ')}]` })),
+      'Retrieved via search APIs. A result mentions the query; it is not verified evidence.');
+    group(root, 'FINDINGS', (d.findings || []).map(f => el('div', 'ev-row', `[${(f.provenance.sources || ['?'])[0]}] ${f.value}`)));
+    group(root, 'SEARCH PROVIDER STATUS', (d.provider_status || []).map(f => el('div', 'ev-row l-warn', `${f.value} — ${(f.meta && f.meta.detail) || ''}`)));
+    group(root, 'MODULE STATUS', Object.entries(d.module_status || {}).sort().map(([k, v]) => {
+      const r = el('div', 'ev-row'); r.appendChild(el('span', 'acc-site', k));
+      r.appendChild(badge(v.state || '?', v.state === 'ok' ? 'v-ok' : (v.state === 'error' ? 'v-bad' : 'v-unk')));
+      if (v.last_error) r.appendChild(el('span', 'note', ' ' + v.last_error));
+      return r;
+    }));
+    const ps = d.pivot_summary || {};
+    if (ps.expanded != null) group(root, 'PIVOTS', [
+      el('div', 'ev-row', `expanded ${ps.expanded} · not expanded ${ps.not_expanded}`),
+      ...(ps.skip_reasons || []).map(([r, n]) => el('div', 'ev-row note', `${r}  ×${n}`))]);
+    group(root, 'MANUAL SEARCH LINKS (not executed)', (d.manual_links || []).flatMap(f =>
+      ((f.meta && f.meta.links) || []).map(l => { const r = el('div', 'ev-row'); r.appendChild(safeLink(l.url, l.name)); return r; })));
+    renderRemediation(root, d.remediation || []);
+  }
 
-    if (d.accounts && d.accounts.length) {
-      const g = el('div', 'dgroup'); g.appendChild(el('h4', null, 'ACCOUNTS (' + d.accounts.length + ')'));
-      d.accounts.forEach(a => {
-        const row = el('div', 'acc-row');
-        row.appendChild(el('span', 'acc-site', a.site || '?'));
-        const link = el('a', null, a.url); link.href = a.url; link.target = '_blank'; link.rel = 'noopener';
-        row.appendChild(link);
-        row.appendChild(el('span', 'conf', a.confidence));
-        g.appendChild(row);
-      });
-      root.appendChild(g);
+  function renderRemediation(root, steps) {
+    if (!steps.length) return;
+    const g = el('div', 'dgroup remediation');
+    g.appendChild(el('h4', null, 'REMEDIATION // FIX THIS'));
+    steps.forEach(r => {
+      const card = el('div', 'rem-card sev-' + (r.severity || 'medium'));
+      const head = el('div', 'rem-head');
+      head.appendChild(el('span', 'rem-sev', (r.severity || 'medium').toUpperCase()));
+      head.appendChild(el('span', 'rem-title', r.title));
+      card.appendChild(head);
+      card.appendChild(el('div', 'rem-action', r.action));
+      if (r.url) card.appendChild(safeLink(r.url, r.url, 'rem-link'));
+      if (r.links) { const w = el('div', 'rem-links'); r.links.forEach(l => w.appendChild(safeLink(l.url, l.name))); card.appendChild(w); }
+      g.appendChild(card);
+    });
+    root.appendChild(g);
+  }
+
+  /* ---------- NODE INFO ---------- */
+  function findItem(id) {
+    const d = DOSSIER || {};
+    const pools = [d.seeds, d.accounts, d.linked_urls, d.search_results, d.findings,
+      ...Object.values(d.identifiers || {})];
+    for (const p of pools) for (const it of (p || [])) if (it.id === id) return it;
+    return null;
+  }
+  function showNode(e) {
+    const box = $('#nodeinfo');
+    if (!e) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden'); box.replaceChildren();
+    box.appendChild(el('b', null, e.type.toUpperCase() + ' · ' + (e.basis || '')));
+    box.appendChild(el('div', 'ev-val', e.value));
+    const it = findItem(e.id);
+    if (it) {
+      const h = el('div'); if (it.assessment) h.appendChild(badge(it.assessment.title, LABEL_CLASS[it.assessment.label] || ''));
+      if (e.type === 'account' || e.type === 'url') h.appendChild(vBadge(e.validation));
+      box.appendChild(h); box.appendChild(whyBox(it));
+    } else {
+      box.appendChild(el('small', null, 'sources: ' + ((e.meta && e.meta.sources) || [e.source]).join(', ')));
     }
-    if (d.findings && d.findings.length) {
-      const g = el('div', 'dgroup'); g.appendChild(el('h4', null, 'FINDINGS'));
-      d.findings.forEach(f => {
-        const row = el('div', 'acc-row');
-        row.appendChild(el('span', 'acc-site', f.source));
-        row.appendChild(el('span', null, f.text));
-        g.appendChild(row);
-      });
-      root.appendChild(g);
-    }
-
-    if (d.remediation && d.remediation.length) {
-      const g = el('div', 'dgroup remediation');
-      g.appendChild(el('h4', null, 'REMEDIATION // FIX THIS'));
-      d.remediation.forEach(r => {
-        const card = el('div', 'rem-card sev-' + (r.severity || 'medium'));
-        const head = el('div', 'rem-head');
-        head.appendChild(el('span', 'rem-sev', (r.severity || 'medium').toUpperCase()));
-        head.appendChild(el('span', 'rem-title', r.title));
-        card.appendChild(head);
-        card.appendChild(el('div', 'rem-action', r.action));
-        if (r.url) {
-          const a = el('a', 'rem-link', r.url); a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
-          card.appendChild(a);
-        }
-        if (r.links) {
-          const wrap = el('div', 'rem-links');
-          r.links.forEach(l => {
-            const a = el('a', null, l.name); a.href = l.url; a.target = '_blank'; a.rel = 'noopener';
-            wrap.appendChild(a);
-          });
-          card.appendChild(wrap);
-        }
-        g.appendChild(card);
-      });
-      root.appendChild(g);
+    const url = (e.meta && e.meta.url) || (['account', 'url'].includes(e.type) ? e.value : null);
+    if (url) { const d = el('div'); d.appendChild(safeLink(url, 'open ↗')); box.appendChild(d); }
+    if (['username', 'email', 'domain', 'phone'].includes(e.type) && e.basis !== 'seed') {
+      const b = el('button', 'btn sm', 'SCAN AS SEED');
+      b.title = MODE === 'recon' ? 'Only if this asset is in your authorised scope'
+        : 'Only if this identifier is yours — it will be scanned as a seed';
+      b.onclick = () => { if (confirm(b.title + '\n\nStart a new scan of: ' + e.value + '?')) engage(e.value); };
+      box.appendChild(b);
     }
   }
 
@@ -290,17 +334,13 @@
     const out = [];
     SNAP.entities.forEach(e => {
       const m = e.meta || {};
-      if (typeof m.lat === 'number' && typeof m.lon === 'number') out.push({ lat: m.lat, lon: m.lon, label: e.value });
-      else if (e.type === 'location' && /^-?\d+\.\d+,-?\d+\.\d+$/.test(e.value)) {
-        const [a, b] = e.value.split(','); out.push({ lat: +a, lon: +b, label: e.value });
-      }
+      if (typeof m.lat === 'number' && typeof m.lon === 'number') out.push({ lat: m.lat, lon: m.lon, label: e.value + (m.note ? ' (' + m.note + ')' : '') });
     });
     return out;
   }
   function renderMap() {
-    const pts = coords();
-    const host = $('#map');
-    if (!pts.length) { host.innerHTML = '<div style="padding:20px;color:var(--dim)">no geo coordinates found</div>'; return; }
+    const pts = coords(), host = $('#map');
+    if (!pts.length) { host.replaceChildren(el('div', 'note pad', 'no coordinates found')); return; }
     if (!leafletTried) {
       leafletTried = true;
       const css = el('link'); css.rel = 'stylesheet'; css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -312,37 +352,38 @@
   }
   function drawMap(pts) {
     if (!window.L) return fallbackMap(pts);
-    $('#map').innerHTML = '';
+    $('#map').replaceChildren();
     if (MAP) { MAP.remove(); MAP = null; }
     MAP = L.map('map').setView([pts[0].lat, pts[0].lon], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(MAP);
-    pts.forEach(p => L.marker([p.lat, p.lon]).addTo(MAP).bindPopup(p.label));
+    pts.forEach(p => { const m = L.marker([p.lat, p.lon]).addTo(MAP); m.bindPopup(el('span', null, p.label)); });
   }
   function fallbackMap(pts) {
-    $('#map').innerHTML = '<div style="padding:20px">' +
-      pts.map(p => `<div><a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=14/${p.lat}/${p.lon}" target="_blank" rel="noopener">${p.label}</a></div>`).join('') +
-      '</div>';
+    const w = el('div', 'pad');
+    pts.forEach(p => { const r = el('div'); r.appendChild(safeLink(`https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}`, p.label)); w.appendChild(r); });
+    $('#map').replaceChildren(w);
   }
 
   /* ---------- ARSENAL ---------- */
-  async function loadArsenal() {
-    const r = await fetch('/api/arsenal'); const d = await r.json();
-    const root = $('#arsenal'); root.innerHTML = '';
+  const STATE_CLS = { operational: 'on', runnable: 'on', installed: 'dimmed', misconfigured: 'failing', failing: 'failing', unavailable: 'off' };
+  async function loadArsenal(force) {
+    if (force) await fetch('/api/health', { method: 'POST' });
+    const d = await (await fetch('/api/arsenal')).json();
+    const root = $('#arsenal'); root.replaceChildren();
     d.tools.forEach(t => {
       const c = el('div', 'tool');
       c.appendChild(el('div', 'tn', t.label));
       c.appendChild(el('div', 'tp', t.purpose));
-      let cls = 'off', txt = '○ MISSING (' + t.kind + ')';
-      if (t.installed && t.failures > 0) { cls = 'failing'; txt = '● ONLINE • FAILING (' + t.failures + ')'; }
-      else if (t.installed) { cls = 'on'; txt = '● ONLINE'; }
-      c.appendChild(el('div', 'st ' + cls, txt));
-      if (!t.installed) {
-        const b = el('button', 'btn sm', 'INSTALL'); b.style.marginTop = '8px';
+      c.appendChild(el('div', 'st ' + (STATE_CLS[t.state] || 'off'), '● ' + t.state.toUpperCase()));
+      if (t.detail) c.appendChild(el('div', 'tp', t.detail));
+      if (t.state === 'unavailable' || t.state === 'misconfigured') {
+        const b = el('button', 'btn sm', t.state === 'unavailable' ? 'INSTALL' : 'REINSTALL'); b.style.marginTop = '8px';
         b.onclick = async () => {
           b.textContent = 'INSTALLING…'; b.disabled = true;
-          const res = await (await fetch('/api/install/' + t.name, { method: 'POST' })).json();
-          b.textContent = res.ok ? 'DONE' : 'FAILED'; log('install ' + t.name + ': ' + (res.ok ? 'ok' : res.msg), res.ok ? 'ok' : 'err');
-          if (res.ok) loadArsenal();
+          const res = await (await fetch('/api/install/' + encodeURIComponent(t.name), { method: 'POST' })).json();
+          b.textContent = res.ok ? 'DONE' : 'FAILED';
+          log('install ' + t.name + ': ' + (res.ok ? 'ok' : '') + ' ' + (res.msg || ''), res.ok ? 'ok' : 'err');
+          loadArsenal(false);
         };
         c.appendChild(b);
       }
@@ -351,65 +392,42 @@
   }
 
   /* ---------- SETTINGS ---------- */
-  const KEY_NAMES = ['shodan', 'hibp', 'hunter', 'virustotal', 'anthropic'];
+  const KEY_NAMES = [['brave', 'Brave Search API key'], ['google_cse_key', 'Google Programmable Search key'], ['google_cse_cx', 'Google search engine ID (cx)']];
   async function loadConfig() {
     const d = await (await fetch('/api/config')).json();
-    const root = $('#keys'); root.innerHTML = '';
-    KEY_NAMES.forEach(k => {
-      const lab = el('label');
-      lab.appendChild(el('span', null, k));
+    const root = $('#keys'); root.replaceChildren();
+    KEY_NAMES.forEach(([k, label]) => {
+      const lab = el('label'); lab.appendChild(el('span', null, label));
       const inp = el('input'); inp.type = 'password'; inp.dataset.key = k;
       inp.placeholder = d.api_keys_set[k] ? '•••• set' : 'not set';
       lab.appendChild(inp); root.appendChild(lab);
     });
+    $('#searxng-url').value = d.searxng_url || '';
+    $('#trust-proxy').checked = !!d.trust_proxy_resolution;
     $('#fx-toggle').checked = d.effects !== false;
-    const cases = $('#cases'); cases.innerHTML = '';
-    (d.cases || []).forEach(c => cases.appendChild(el('div', 'case-row',
-      `${c.when || ''} · ${c.mode || ''} · ${JSON.stringify(c.target)}`)));
+    const cases = $('#cases'); cases.replaceChildren();
+    (d.cases || []).forEach(c => cases.appendChild(el('div', 'case-row', `${c.when || ''} · ${c.mode || ''} · ${JSON.stringify(c.target)}`)));
   }
   async function saveKeys() {
     const keys = {};
     document.querySelectorAll('#keys input').forEach(i => { if (i.value) keys[i.dataset.key] = i.value; });
-    await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_keys: keys, effects: $('#fx-toggle').checked }) });
-    log('settings saved', 'ok'); loadConfig(); loadArsenal();
+    await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      api_keys: keys, effects: $('#fx-toggle').checked, searxng_url: $('#searxng-url').value,
+      trust_proxy_resolution: $('#trust-proxy').checked }) });
+    log('settings saved', 'ok'); loadConfig(); loadArsenal(false);
   }
 
-  /* ---------- EXPORT ---------- */
-  function download(name, text, type) {
-    const b = new Blob([text], { type }); const u = URL.createObjectURL(b);
-    const a = el('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
+  /* ---------- EXPORT (server-rendered from the same dossier) ---------- */
+  function download(name, blob) {
+    const u = URL.createObjectURL(blob); const a = el('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u);
   }
   function exportJSON() {
-    download('unisint-case.json', JSON.stringify({ snapshot: SNAP, dossier: DOSSIER }, null, 2), 'application/json');
+    download('unisint-case.json', new Blob([JSON.stringify({ dossier: DOSSIER, snapshot: SNAP }, null, 2)], { type: 'application/json' }));
   }
-  function csvCell(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }
-  function exportCSV() {
-    const rows = [['type', 'value', 'source', 'confidence', 'site', 'url']];
-    SNAP.entities.forEach(e => {
-      const m = e.meta || {};
-      rows.push([e.type, e.value, (m.sources || [e.source]).join('|'),
-        (e.confidence || 0).toFixed(2), m.site || '', m.url || '']);
-    });
-    download('unisint-entities.csv', rows.map(r => r.map(csvCell).join(',')).join('\n'), 'text/csv');
-  }
-  function exportHTML() {
-    const d = DOSSIER || {};
-    const sec = (t, a) => a && a.length ? `<h2>${t}</h2><p>${a.map(escapeHtml).join(', ')}</p>` : '';
-    const acc = (d.accounts || []).map(a => `<li><b>${escapeHtml(a.site)}</b> — <a href="${a.url}">${escapeHtml(a.url)}</a> (${a.confidence})</li>`).join('');
-    const find = (d.findings || []).map(f => `<li>[${escapeHtml(f.source)}] ${escapeHtml(f.text)}</li>`).join('');
-    const rem = (d.remediation || []).map(r => `<li><b>[${escapeHtml((r.severity || '').toUpperCase())}] ${escapeHtml(r.title)}</b><br>${escapeHtml(r.action)}${r.url ? ` <a href="${r.url}">${escapeHtml(r.url)}</a>` : ''}${(r.links || []).map(l => ` · <a href="${l.url}">${escapeHtml(l.name)}</a>`).join('')}</li>`).join('');
-    const html = `<!doctype html><meta charset=utf-8><title>UNISINT dossier</title>
-<style>body{font-family:monospace;background:#02060a;color:#33ff66;padding:40px;max-width:900px;margin:auto}
-h1{color:#ffb000}h2{color:#27e8ff;border-bottom:1px solid #1c8a3e}a{color:#27e8ff}li{margin:3px 0}</style>
-<h1>UNISINT DOSSIER</h1><p>mode: ${escapeHtml(SNAP.mode || '')} · generated ${new Date().toISOString()}</p>
-<p><b>${d.exposure_count || 0}</b> accounts/signals. Risk: ${(d.risk_flags || []).map(escapeHtml).join('; ') || 'none flagged'}</p>
-${sec('Names', d.names)}${sec('Usernames', d.usernames)}${sec('Emails', d.emails)}
-${sec('Phones', d.phones)}${sec('Locations', d.locations)}${sec('Orgs', d.orgs)}
-${sec('Domains', d.domains)}${sec('Hosts', d.hosts)}${sec('IPs', d.ips)}
-<h2>Accounts</h2><ul>${acc}</ul><h2>Findings</h2><ul>${find}</ul>
-${rem ? `<h2>Remediation — Fix This</h2><ul>${rem}</ul>` : ''}
-<hr><p><small>Public-source OSINT. For authorized self-audit / assessment only.</small></p>`;
-    download('unisint-dossier.html', html, 'text/html');
+  async function exportServer(fmt, name) {
+    if (!DOSSIER) { log('nothing to export yet', 'warn'); return; }
+    const r = await fetch('/api/export/' + fmt, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dossier: DOSSIER }) });
+    download(name, await r.blob());
   }
 
   boot();

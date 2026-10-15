@@ -38,7 +38,7 @@
 <!-- MAIN -->
 <div id="app" class="app hidden">
   <header class="topbar">
-    <div class="brand">UNI<span>SINT</span><em>v1.0</em></div>
+    <div class="brand">UNI<span>SINT</span><em>v2.0</em></div>
     <nav class="tabs">
       <button class="tab active" data-view="graph">GRAPH</button>
       <button class="tab" data-view="dossier">DOSSIER</button>
@@ -91,6 +91,9 @@
       <option value="standard" selected>STANDARD</option>
       <option value="deep">DEEP</option>
     </select>
+    <label class="chk inline" title="Check each discovered link (rate-limited, SSRF-guarded). Off = links shown as 'unchecked'.">
+      <input type="checkbox" id="validate-links"> VERIFY LINKS
+    </label>
     <button id="engage" class="btn big">ENGAGE</button>
     <button id="cancel" class="btn danger hidden">ABORT</button>
     <input type="file" id="imgfile" accept="image/*" class="hidden">
@@ -113,11 +116,11 @@
       <div id="view-dossier" class="view">
         <div class="dossier-head">
           <div class="exposure" id="exposure">0</div>
-          <div class="exposure-lbl">SIGNALS</div>
+          <div class="exposure-lbl" id="exposure-lbl">ACCOUNTS</div>
           <div class="risk" id="risk"></div>
           <div class="spacer"></div>
           <button id="export-json" class="btn sm">EXPORT JSON</button>
-          <button id="export-csv" class="btn sm">CSV</button>
+          <button id="export-csv" class="btn sm">EVIDENCE CSV</button>
           <button id="export-html" class="btn sm">REPORT</button>
         </div>
         <div id="dossier" class="dossier"></div>
@@ -129,15 +132,19 @@
 
       <div id="view-arsenal" class="view">
         <div class="arsenal-head">
-          TOOL ARSENAL
-          <button id="refresh-arsenal" class="btn sm">REFRESH</button>
+          TOOL ARSENAL <small>— states come from a real health check, not "file exists"</small>
+          <button id="refresh-arsenal" class="btn sm">RECHECK</button>
         </div>
         <div id="arsenal" class="arsenal"></div>
       </div>
 
       <div id="view-settings" class="view">
-        <h3>API KEYS <small>(optional — stored locally in ~/.unisint)</small></h3>
+        <h3>SEARCH PROVIDERS <small>(optional — enables real web search; stored in ~/.unisint, mode 0600)</small></h3>
         <div id="keys" class="keys"></div>
+        <div class="keys">
+          <label><span>SearXNG URL</span><input id="searxng-url" placeholder="http://127.0.0.1:8888 (your own instance, JSON enabled)"></label>
+        </div>
+        <label class="chk"><input type="checkbox" id="trust-proxy"> allow link checks to hosts this machine cannot resolve (only if you use a proxy that resolves them)</label>
         <button id="save-keys" class="btn sm">SAVE</button>
         <h3>EFFECTS</h3>
         <label class="chk"><input type="checkbox" id="fx-toggle" checked> matrix / CRT effects</label>

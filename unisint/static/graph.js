@@ -22,7 +22,7 @@
     }
     clear() { this.nodes.clear(); this.links = []; this.selected = null; }
     addNode(e) {
-      if (this.nodes.has(e.id)) { Object.assign(this.nodes.get(e.id).data, e); return; }
+      if (this.nodes.has(e.id)) { this.nodes.get(e.id).data = e; return; }
       const ang = Math.random() * Math.PI * 2, rad = 60 + Math.random() * 120;
       this.nodes.set(e.id, {
         id: e.id, x: this.cx + Math.cos(ang) * rad, y: this.cy + Math.sin(ang) * rad,
@@ -55,8 +55,8 @@
     }
     _radius(n) {
       const d = n.data;
-      if (d.source === 'input') return 11;
-      return 5 + Math.min(6, (d.confidence || .5) * 6);
+      if (d.basis === 'seed') return 11;
+      return d.basis === 'candidate' ? 5 : 7;
     }
     _physics() {
       const ns = [...this.nodes.values()];
@@ -83,7 +83,7 @@
       }
       for (const a of ns) {
         a.vx *= 0.82; a.vy *= 0.82;
-        if (a.data.source !== 'input') { a.x += a.vx; a.y += a.vy; }
+        if (a.data.basis !== 'seed') { a.x += a.vx; a.y += a.vy; }
         else { a.x += a.vx * .3; a.y += a.vy * .3; }
       }
     }
@@ -97,8 +97,10 @@
         const a = this.nodes.get(l.src), b = this.nodes.get(l.dst);
         if (!a || !b) continue;
         ctx.strokeStyle = 'rgba(28,138,62,0.5)';
+        ctx.setLineDash(l.basis === 'candidate' ? [3, 4] : []);   // dashed = unconfirmed
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
+      ctx.setLineDash([]);
       // nodes
       const now = performance.now();
       for (const n of this.nodes.values()) {
@@ -112,8 +114,19 @@
           ctx.stroke(); ctx.globalAlpha = 1;
         }
         ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7);
-        ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 10;
-        ctx.fill(); ctx.shadowBlur = 0;
+        if (n.data.basis === 'candidate' || n.data.basis === 'derived') {
+          // Unconfirmed: hollow, dim — must not look as certain as an observation.
+          ctx.globalAlpha = 0.55; ctx.strokeStyle = c; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 10;
+          ctx.fill(); ctx.shadowBlur = 0;
+        }
+        const vs = n.data.validation && n.data.validation.state;
+        if (vs === 'not_found' || vs === 'soft_404' || vs === 'unsafe') {
+          ctx.beginPath(); ctx.arc(n.x, n.y, r + 3, 0, 7);
+          ctx.strokeStyle = '#ff2e4d'; ctx.lineWidth = 2; ctx.stroke();
+        }
         if (n.id === this.selected || n.id === this.hover) {
           ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
           ctx.fillStyle = '#d7ffe4'; ctx.font = '11px monospace';
