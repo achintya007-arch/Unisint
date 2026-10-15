@@ -75,6 +75,19 @@ async def set_config(payload: dict) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.post("/api/gap")
+async def report_gap(payload: dict) -> JSONResponse:
+    rec = config.add_gap(
+        payload.get("what", ""), payload.get("missing", ""),
+        payload.get("severity", "medium"))
+    return JSONResponse({"ok": True, "gap": rec, **config.list_gaps()})
+
+
+@app.get("/api/gaps")
+async def get_gaps() -> JSONResponse:
+    return JSONResponse(config.list_gaps())
+
+
 @app.post("/api/detect")
 async def detect_type(payload: dict) -> JSONResponse:
     val = payload.get("value", "")

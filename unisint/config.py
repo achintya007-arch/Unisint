@@ -66,6 +66,32 @@ def save_case(name: str, data: dict[str, Any]) -> Path:
     return path
 
 
+GAPS_PATH = HOME / "gaps.md"
+
+
+def add_gap(what: str, missing: str, severity: str = "medium") -> dict[str, Any]:
+    """Append a timestamped gap note to ~/.unisint/gaps.md."""
+    _ensure_dirs()
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    entry = (f"\n### {stamp} · {severity.upper()}\n"
+             f"- **Tried:** {what.strip() or '(unspecified)'}\n"
+             f"- **Missing / wrong:** {missing.strip() or '(unspecified)'}\n")
+    if not GAPS_PATH.exists():
+        GAPS_PATH.write_text("# UNISINT — gaps found while testing\n")
+    with GAPS_PATH.open("a") as fh:
+        fh.write(entry)
+    return {"when": stamp, "what": what, "missing": missing,
+            "severity": severity}
+
+
+def list_gaps() -> dict[str, Any]:
+    """Return the raw gaps markdown and a count."""
+    if not GAPS_PATH.exists():
+        return {"text": "", "count": 0, "path": str(GAPS_PATH)}
+    text = GAPS_PATH.read_text()
+    return {"text": text, "count": text.count("\n### "), "path": str(GAPS_PATH)}
+
+
 def list_cases() -> list[dict[str, Any]]:
     _ensure_dirs()
     out = []

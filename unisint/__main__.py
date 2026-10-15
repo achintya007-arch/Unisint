@@ -9,10 +9,18 @@ import uvicorn
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="UNISINT OSINT console")
+    ap.add_argument("command", nargs="?", default="serve",
+                    choices=["serve", "doctor"],
+                    help="'serve' (default) launches the UI; "
+                         "'doctor' runs a self-check")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
+
+    if args.command == "doctor":
+        from . import doctor
+        raise SystemExit(doctor.run())
 
     url = f"http://{args.host}:{args.port}"
     print(f"\n  UNISINT online -> {url}\n")

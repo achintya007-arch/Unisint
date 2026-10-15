@@ -44,6 +44,31 @@ def test_arsenal_shape():
     assert all("installed" in t and "failures" in t for t in d["tools"])
 
 
+def test_gap_roundtrip():
+    r = client.post("/api/gap", json={"what": "self-audit on email",
+                                      "missing": "no instagram check",
+                                      "severity": "high"})
+    assert r.json()["ok"] is True
+    g = client.get("/api/gaps").json()
+    assert g["count"] >= 1
+    assert "no instagram check" in g["text"]
+
+
+def test_doctor_offline(monkeypatch):
+    import asyncio
+
+    from unisint import doctor
+
+    async def no_net():
+        return [(doctor.OK, "stubbed", "skipped")]
+
+    monkeypatch.setattr(doctor, "_check_endpoints", no_net)
+    report, tally = asyncio.run(doctor._run())
+    assert "UNISINT DOCTOR" in report
+    assert "[ MODULES ]" in report and "[ WRAPPED TOOLS ]" in report
+    assert tally["ok"] >= 1
+
+
 def test_ws_requires_authorization():
     with client.websocket_connect("/ws") as ws:
         ws.send_json({"mode": "self", "authorized": False,

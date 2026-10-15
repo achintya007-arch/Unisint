@@ -46,8 +46,36 @@
       <button class="tab" data-view="arsenal">ARSENAL</button>
       <button class="tab" data-view="settings">SETTINGS</button>
     </nav>
+    <button id="report-gap" class="btn sm gap-btn" title="Log a gap you found">REPORT GAP</button>
     <div class="status" id="status">IDLE</div>
   </header>
+
+  <!-- REPORT GAP MODAL -->
+  <div id="gap-modal" class="modal hidden">
+    <div class="modal-box">
+      <h2>// REPORT A GAP</h2>
+      <p>Logged locally to <code>~/.unisint/gaps.md</code> so you can paste it
+         back later. Nothing is sent anywhere.</p>
+      <label class="gap-label">What did you try?
+        <input id="gap-what" placeholder="e.g. self-audit on my email, DEEP preset">
+      </label>
+      <label class="gap-label">What was missing or wrong?
+        <textarea id="gap-missing" rows="3" placeholder="e.g. holehe found nothing; no Instagram check; graph froze"></textarea>
+      </label>
+      <label class="gap-label">Severity
+        <select id="gap-sev">
+          <option value="low">low</option>
+          <option value="medium" selected>medium</option>
+          <option value="high">high</option>
+        </select>
+      </label>
+      <div class="gap-actions">
+        <button id="gap-cancel" class="btn sm">CANCEL</button>
+        <button id="gap-save" class="btn sm">SAVE GAP</button>
+      </div>
+      <div id="gap-count" class="gap-count"></div>
+    </div>
+  </div>
 
   <section class="control">
     <div class="mode-switch">

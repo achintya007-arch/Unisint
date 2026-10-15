@@ -23,7 +23,23 @@ On launch you must acknowledge that you own or are authorized to assess
 the targets you enter. UNISINT uses **public sources only** — no breach
 password dumps, no login bypass, no SMTP probing, no face recognition.
 
-## Quick start
+## Quick start (Windows + WSL — recommended)
+
+Open a terminal, then:
+
+```bash
+wsl                                        # drop into Ubuntu
+sudo apt update && sudo apt install -y git python3 python3-venv python3-pip
+git clone https://github.com/achintya007-arch/Unisint.git
+cd Unisint && git checkout build-unisint
+./setup.sh                                 # one command: installs, self-checks, launches
+```
+
+Then open **http://127.0.0.1:8777** in your Windows browser (WSL forwards
+localhost automatically). `setup.sh` is safe to re-run; after the first time
+you can just `source .venv/bin/activate && unisint`.
+
+### Other platforms
 
 ```bash
 ./run.sh                 # installs core deps, opens http://127.0.0.1:8777
@@ -34,6 +50,16 @@ python -m unisint
 pip install .
 unisint
 ```
+
+### Check your setup / find gaps
+
+```bash
+python -m unisint doctor   # reports Python, modules, tools, and network reachability
+```
+
+It writes the same report to `~/.unisint/doctor-report.txt`. While testing, use
+the in-app **REPORT GAP** button (top bar) to jot what's missing — it logs to
+`~/.unisint/gaps.md`, which you can paste back for follow-up.
 
 Everything runs **locally**. No data leaves your machine except the public
 lookups each module performs.

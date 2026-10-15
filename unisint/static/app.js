@@ -69,7 +69,33 @@
     $('#save-keys').addEventListener('click', saveKeys);
     $('#fx-toggle').addEventListener('change', e => window.UNISINT_FX.set(e.target.checked));
 
+    // Report-a-gap modal
+    $('#report-gap').addEventListener('click', openGap);
+    $('#gap-cancel').addEventListener('click', () => $('#gap-modal').classList.add('hidden'));
+    $('#gap-save').addEventListener('click', saveGap);
+
     loadArsenal(); loadConfig();
+  }
+
+  async function openGap() {
+    $('#gap-modal').classList.remove('hidden');
+    try {
+      const d = await (await fetch('/api/gaps')).json();
+      $('#gap-count').textContent = d.count ? `${d.count} gap(s) logged so far → ${d.path}` : '';
+    } catch { }
+  }
+  async function saveGap() {
+    const body = {
+      what: $('#gap-what').value, missing: $('#gap-missing').value,
+      severity: $('#gap-sev').value,
+    };
+    if (!body.what && !body.missing) { $('#gap-modal').classList.add('hidden'); return; }
+    try {
+      const d = await (await fetch('/api/gap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+      log(`gap logged (${d.count} total) → ${d.path}`, 'ok');
+    } catch { log('could not save gap', 'err'); }
+    $('#gap-what').value = ''; $('#gap-missing').value = '';
+    $('#gap-modal').classList.add('hidden');
   }
 
   function switchView(v) {
