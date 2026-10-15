@@ -30,6 +30,9 @@ password dumps, no login bypass, no SMTP probing, no face recognition.
 # or
 pip install -r requirements.txt
 python -m unisint
+# or install as a package (provides a `unisint` command)
+pip install .
+unisint
 ```
 
 Everything runs **locally**. No data leaves your machine except the public
@@ -55,8 +58,11 @@ the scan still runs with whatever is available.
    auto-detected — or drop an image.
 3. Choose **QUICK / STANDARD / DEEP** and hit **ENGAGE**.
 4. Watch the live feed and graph. Click any node to open or inspect it.
-5. Review the **DOSSIER**, check the **MAP** for geolocated findings, and
-   **EXPORT** JSON or a standalone HTML report.
+5. Review the **DOSSIER**. In SELF-AUDIT mode it ends with a
+   **REMEDIATION // FIX THIS** section: per-account lock-down links, how to
+   rotate an email leaked in public commits, how to scrub photo GPS, and
+   data-broker opt-out links. Check the **MAP** for geolocated findings, and
+   **EXPORT** JSON, CSV, or a standalone HTML report.
 
 Optional API keys (Shodan, HIBP, Hunter, VirusTotal, Anthropic for an AI
 summary) can be added under **SETTINGS**; they are stored only in

@@ -16,6 +16,20 @@ from .config import TOOLS_DIR
 VENV_BIN = TOOLS_DIR / "venv" / "bin"
 GO_BIN = TOOLS_DIR / "go" / "bin"
 
+# In-memory record of tools that ran but failed this session (crash, timeout,
+# or nonzero exit), keyed by the basename of the command. Surfaced in the
+# ARSENAL so a tool that is installed but misbehaving is visible, not silent.
+_FAILURES: dict[str, int] = {}
+
+
+def record_failure(binary: str) -> None:
+    name = os.path.basename(binary)
+    _FAILURES[name] = _FAILURES.get(name, 0) + 1
+
+
+def failure_counts() -> dict[str, int]:
+    return dict(_FAILURES)
+
 
 def which(name: str) -> str | None:
     """Locate a tool, preferring UNISINT's managed dirs."""
@@ -57,10 +71,14 @@ async def run(
         except ProcessLookupError:
             pass
         await proc.wait()
+        record_failure(cmd[0])
         return 124, "", f"timeout after {timeout}s"
 
+    rc = proc.returncode or 0
+    if rc not in (0,):
+        record_failure(cmd[0])
     return (
-        proc.returncode or 0,
+        rc,
         out.decode("utf-8", "replace"),
         err.decode("utf-8", "replace"),
     )

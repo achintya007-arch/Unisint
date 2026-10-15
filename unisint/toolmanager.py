@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 
 from .config import TOOLS_DIR
-from .runner import GO_BIN, VENV_BIN, run, which
+from .runner import GO_BIN, VENV_BIN, failure_counts, run, which
 
 VENV_PY = VENV_BIN / "python"
 
@@ -51,6 +51,7 @@ CATALOG: list[Tool] = [
 
 
 def status() -> list[dict]:
+    fails = failure_counts()
     rows = []
     for t in CATALOG:
         path = which(t.name)
@@ -58,6 +59,7 @@ def status() -> list[dict]:
             "name": t.name, "label": t.label, "kind": t.kind,
             "purpose": t.purpose, "installed": bool(path),
             "path": path or "", "spec": t.spec,
+            "failures": fails.get(t.name, 0),
         })
     return rows
 

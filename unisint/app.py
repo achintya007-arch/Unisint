@@ -143,23 +143,30 @@ async def ws(sock: WebSocket) -> None:
             engine.cancel()
 
     cancel_task = asyncio.create_task(listen_cancel())
-    await engine.run()
-    cancel_task.cancel()
-
-    snap = engine.snapshot()
-    snap["target"] = targets
-    snap["mode"] = mode
-    dossier = build_dossier(snap)
-    await emit({"type": "dossier", "dossier": dossier})
-
-    # Persist the case.
-    label = (targets[0] if targets else "case")
-    label = label.get("value") if isinstance(label, dict) else str(label)
     try:
-        config.save_case(label, {**snap, "dossier": dossier})
+        await engine.run()
     except Exception:
-        pass
-    await sock.close()
+        # A disconnect or runtime error must not lose what was found so far.
+        engine.cancel()
+    finally:
+        cancel_task.cancel()
+        # Build + persist whatever the engine collected, even on a drop/cancel.
+        snap = engine.snapshot()
+        snap["target"] = targets
+        snap["mode"] = mode
+        dossier = build_dossier(snap)
+        await emit({"type": "dossier", "dossier": dossier})
+
+        label = (targets[0] if targets else "case")
+        label = label.get("value") if isinstance(label, dict) else str(label)
+        try:
+            config.save_case(label, {**snap, "dossier": dossier})
+        except Exception:
+            pass
+        try:
+            await sock.close()
+        except Exception:
+            pass
 
 
 app.mount("/", StaticFiles(directory=str(STATIC)), name="static")

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unisint"
+version = "1.1.0"
+description = "Unified OSINT console for self-audit and authorized recon, with a movie-hacker web UI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "UNISINT" }]
+keywords = ["osint", "self-audit", "recon", "security", "footprint"]
+
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.29,<1.0",
+    "httpx>=0.27,<1.0",
+    "phonenumbers>=8.13",
+    "dnspython>=2.6",
+    "pillow>=10.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# Wrapped external OSINT tools. Prefer installing these via the in-app
+# ARSENAL (isolated venv) to avoid dependency clashes; this extra exists
+# for users who want them in the same environment.
+tools = [
+    "sherlock-project",
+    "maigret",
+    "holehe",
+    "socialscan",
+    "ignorant",
+    "theHarvester",
+]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+unisint = "unisint.__main__:main"
+
+[tool.setuptools]
+packages = ["unisint", "unisint.adapters", "unisint.native"]
+
+[tool.setuptools.package-data]
+unisint = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

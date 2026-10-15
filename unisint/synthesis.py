@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import Any
 
 from .models import EntityType
+from .remediation import build_remediation
 
 
 def build_dossier(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -68,4 +69,10 @@ def build_dossier(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     profile["exposure_count"] = exposures
     profile["risk_flags"] = risk
+
+    # Remediation guidance is only meaningful for self-audit (your own assets).
+    if snapshot.get("mode") == "self":
+        profile["remediation"] = build_remediation(profile)
+    else:
+        profile["remediation"] = []
     return profile

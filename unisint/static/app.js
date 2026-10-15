@@ -63,6 +63,7 @@
     $('#imgfile').addEventListener('change', e => { if (e.target.files[0]) uploadImage(e.target.files[0]); });
 
     $('#export-json').addEventListener('click', exportJSON);
+    $('#export-csv').addEventListener('click', exportCSV);
     $('#export-html').addEventListener('click', exportHTML);
     $('#refresh-arsenal').addEventListener('click', loadArsenal);
     $('#save-keys').addEventListener('click', saveKeys);
@@ -228,6 +229,33 @@
       });
       root.appendChild(g);
     }
+
+    if (d.remediation && d.remediation.length) {
+      const g = el('div', 'dgroup remediation');
+      g.appendChild(el('h4', null, 'REMEDIATION // FIX THIS'));
+      d.remediation.forEach(r => {
+        const card = el('div', 'rem-card sev-' + (r.severity || 'medium'));
+        const head = el('div', 'rem-head');
+        head.appendChild(el('span', 'rem-sev', (r.severity || 'medium').toUpperCase()));
+        head.appendChild(el('span', 'rem-title', r.title));
+        card.appendChild(head);
+        card.appendChild(el('div', 'rem-action', r.action));
+        if (r.url) {
+          const a = el('a', 'rem-link', r.url); a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
+          card.appendChild(a);
+        }
+        if (r.links) {
+          const wrap = el('div', 'rem-links');
+          r.links.forEach(l => {
+            const a = el('a', null, l.name); a.href = l.url; a.target = '_blank'; a.rel = 'noopener';
+            wrap.appendChild(a);
+          });
+          card.appendChild(wrap);
+        }
+        g.appendChild(card);
+      });
+      root.appendChild(g);
+    }
   }
 
   /* ---------- MAP ---------- */
@@ -278,9 +306,10 @@
       const c = el('div', 'tool');
       c.appendChild(el('div', 'tn', t.label));
       c.appendChild(el('div', 'tp', t.purpose));
-      const st = el('div', 'st ' + (t.installed ? 'on' : 'off'),
-        t.installed ? '● ONLINE' : '○ MISSING (' + t.kind + ')');
-      c.appendChild(st);
+      let cls = 'off', txt = '○ MISSING (' + t.kind + ')';
+      if (t.installed && t.failures > 0) { cls = 'failing'; txt = '● ONLINE • FAILING (' + t.failures + ')'; }
+      else if (t.installed) { cls = 'on'; txt = '● ONLINE'; }
+      c.appendChild(el('div', 'st ' + cls, txt));
       if (!t.installed) {
         const b = el('button', 'btn sm', 'INSTALL'); b.style.marginTop = '8px';
         b.onclick = async () => {
@@ -327,11 +356,22 @@
   function exportJSON() {
     download('unisint-case.json', JSON.stringify({ snapshot: SNAP, dossier: DOSSIER }, null, 2), 'application/json');
   }
+  function csvCell(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }
+  function exportCSV() {
+    const rows = [['type', 'value', 'source', 'confidence', 'site', 'url']];
+    SNAP.entities.forEach(e => {
+      const m = e.meta || {};
+      rows.push([e.type, e.value, (m.sources || [e.source]).join('|'),
+        (e.confidence || 0).toFixed(2), m.site || '', m.url || '']);
+    });
+    download('unisint-entities.csv', rows.map(r => r.map(csvCell).join(',')).join('\n'), 'text/csv');
+  }
   function exportHTML() {
     const d = DOSSIER || {};
     const sec = (t, a) => a && a.length ? `<h2>${t}</h2><p>${a.map(escapeHtml).join(', ')}</p>` : '';
     const acc = (d.accounts || []).map(a => `<li><b>${escapeHtml(a.site)}</b> — <a href="${a.url}">${escapeHtml(a.url)}</a> (${a.confidence})</li>`).join('');
     const find = (d.findings || []).map(f => `<li>[${escapeHtml(f.source)}] ${escapeHtml(f.text)}</li>`).join('');
+    const rem = (d.remediation || []).map(r => `<li><b>[${escapeHtml((r.severity || '').toUpperCase())}] ${escapeHtml(r.title)}</b><br>${escapeHtml(r.action)}${r.url ? ` <a href="${r.url}">${escapeHtml(r.url)}</a>` : ''}${(r.links || []).map(l => ` · <a href="${l.url}">${escapeHtml(l.name)}</a>`).join('')}</li>`).join('');
     const html = `<!doctype html><meta charset=utf-8><title>UNISINT dossier</title>
 <style>body{font-family:monospace;background:#02060a;color:#33ff66;padding:40px;max-width:900px;margin:auto}
 h1{color:#ffb000}h2{color:#27e8ff;border-bottom:1px solid #1c8a3e}a{color:#27e8ff}li{margin:3px 0}</style>
@@ -341,6 +381,7 @@ ${sec('Names', d.names)}${sec('Usernames', d.usernames)}${sec('Emails', d.emails
 ${sec('Phones', d.phones)}${sec('Locations', d.locations)}${sec('Orgs', d.orgs)}
 ${sec('Domains', d.domains)}${sec('Hosts', d.hosts)}${sec('IPs', d.ips)}
 <h2>Accounts</h2><ul>${acc}</ul><h2>Findings</h2><ul>${find}</ul>
+${rem ? `<h2>Remediation — Fix This</h2><ul>${rem}</ul>` : ''}
 <hr><p><small>Public-source OSINT. For authorized self-audit / assessment only.</small></p>`;
     download('unisint-dossier.html', html, 'text/html');
   }

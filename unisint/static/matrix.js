@@ -3,7 +3,8 @@
   const cv = document.getElementById('matrix');
   const ctx = cv.getContext('2d');
   const chars = 'アイウエオ0123456789ABCDEF<>/\\{}[]#$%&@UNISINT'.split('');
-  let cols, drops, raf, running = true;
+  const reduce = matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let cols, drops, raf, running = !reduce;   // honour reduced-motion on load
 
   function resize() {
     cv.width = innerWidth; cv.height = innerHeight;
