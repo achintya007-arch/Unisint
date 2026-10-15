@@ -1,0 +1,62 @@
+
+               __    _____           __         
+   _______  __/ /_  / __(_)___  ____/ /__  _____
+  / ___/ / / / __ \/ /_/ / __ \/ __  / _ \/ ___/
+ (__  ) /_/ / /_/ / __/ / / / / /_/ /  __/ /    
+/____/\__,_/_.___/_/ /_/_/ /_/\__,_/\___/_/
+
+		projectdiscovery.io
+
+[INF] Loading provider config from /root/.config/subfinder/provider-config.yaml
+[INF] Enumerating subdomains for example.com
+[INF] Found 0 subdomains for example.com in 3 milliseconds 459 microseconds
+[INF] Printing source statistics for example.com
+
+ Source               Duration      Results   Requests     Errors
+────────────────────────────────────────────────────────────────────
+ anubis               2ms                 0          1          1
+ builtwith            0s                  0          0          0
+ crtname              1ms                 0          1          1
+ crtsh                3ms                 0          1          2
+ digitorus            2ms                 0          1          1
+ driftnet             1ms                 0          4          4
+ hackertarget         2ms                 0          1          1
+ leakix               2ms                 0          1          1
+ reconeer             2ms                 0          1          1
+ scanmalware          3ms                 0          3          3
+ shodanct             1ms                 0          1          1
+ subdomaincenter      1ms                 0          1          1
+ submd                1ms                 0          1          1
+ virustotal           0s                  0          0          0
+
+
+ The following sources were included but skipped...
+
+ alienvault
+ bevigil
+ bufferover
+ c99
+ censys
+ certspotter
+ chaos
+ chinaz
+ digitalyama
+ dnsdumpster
+ dnsrepo
+ domainsproject
+ fofa
+ fullhunt
+ intelx
+ onyphe
+ profundis
+ quake
+ redhuntlabs
+ robtex
+ rsecloud
+ securitytrails
+ shodan
+ urlscan
+ whoisxmlapi
+ windvane
+
+

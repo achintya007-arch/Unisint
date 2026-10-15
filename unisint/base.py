@@ -39,7 +39,15 @@ class Context:
         self._engine.emit_log(msg, level="err", module=self.entity.source)
 
     failed: str | None = None
+    partial_reason: str | None = None
     added: int = 0
+
+    def partial(self, msg: str) -> None:
+        """Report that this run completed but upstream sources were degraded
+        (some failed, were rate-limited, or their status is unknown). Results
+        that were returned are still recorded."""
+        self.partial_reason = msg
+        self._engine.emit_log(msg, level="warn", module=self.entity.source)
 
     def check_http(self, resp, service: str) -> bool:
         """True for 200. 404 = an honest 'not found' (empty run); 429 and any

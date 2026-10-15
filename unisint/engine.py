@@ -315,14 +315,17 @@ class Engine:
             ctx = Context(self, probe)
             started = time.time()
             st = self.module_status.setdefault(
-                mod.name, {"runs": 0, "ok": 0, "empty": 0, "errors": 0,
-                           "last_error": ""})
+                mod.name, {"runs": 0, "ok": 0, "empty": 0, "partial": 0,
+                           "errors": 0, "last_error": ""})
             st["runs"] += 1
             try:
                 await mod.run(ctx)
                 if ctx.failed:
                     st["errors"] += 1
                     st["last_error"] = ctx.failed[:200]
+                elif ctx.partial_reason:
+                    st["partial"] += 1
+                    st["last_error"] = ctx.partial_reason[:200]
                 elif ctx.added:
                     st["ok"] += 1
                 else:
@@ -334,8 +337,9 @@ class Engine:
                               module=mod.name)
             finally:
                 st["last_ms"] = int((time.time() - started) * 1000)
-                st["state"] = ("error" if st["errors"] and not (st["ok"] or st["empty"])
-                               else "partial" if st["errors"]
+                good = st["ok"] or st["empty"] or st["partial"]
+                st["state"] = ("error" if st["errors"] and not good
+                               else "partial" if st["errors"] or st["partial"]
                                else "ok" if st["ok"] else "empty")
 
     # ---- link validation (opt-in) ---------------------------------------

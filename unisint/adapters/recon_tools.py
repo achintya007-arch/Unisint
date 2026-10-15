@@ -73,6 +73,115 @@ def parse_harvester_json(data: dict, dom: str) -> dict:
             "ips": sorted(set(data.get("ips", []) or []))}
 
 
+# ---- upstream-source status (tools exit 0 even when every source fails) ----
+
+FAILED_STATES = {"failed", "rate-limited"}
+
+
+def summarize_sources(execs: dict[str, dict]) -> tuple[str, str]:
+    """Aggregate per-source outcomes → (status, human detail).
+
+    ``execs`` maps source → {"status": completed|partial|failed|rate-limited|
+    skipped, "detail": str}. Returns status in:
+      complete — every attempted source completed
+      partial  — some sources failed/partial (results may be incomplete)
+      failed   — every attempted source failed
+      unknown  — no per-source information available
+    """
+    attempted = {k: v for k, v in execs.items() if v.get("status") != "skipped"}
+    if not attempted:
+        return ("unknown", "no per-source status reported") if not execs else \
+            ("failed", "every source was skipped (missing keys?)")
+    bad = {k: v for k, v in attempted.items() if v.get("status") in FAILED_STATES}
+    part = {k: v for k, v in attempted.items() if v.get("status") == "partial"}
+
+    def fmt(d):
+        return ", ".join(f"{k} ({v.get('detail') or v.get('status')})" for k, v in sorted(d.items()))
+    if len(bad) == len(attempted):
+        return "failed", f"all {len(attempted)} source(s) failed: {fmt(bad)}"
+    if bad or part:
+        return "partial", (f"{len(bad)} of {len(attempted)} source(s) failed"
+                           + (f": {fmt(bad)}" if bad else "")
+                           + (f"; partial: {fmt(part)}" if part else ""))
+    return "complete", f"{len(attempted)} source(s) completed"
+
+
+def parse_harvester_summary(jsonl_text: str) -> dict | None:
+    """theHarvester >= 5 writes a ``type: summary`` record to NAME.jsonl with
+    ``source_executions`` (status ∈ completed/partial/failed/rate-limited/
+    skipped, stop_reason, result_count) and ``evidence_status``."""
+    for line in (jsonl_text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") == "summary":
+            execs = {}
+            for e in rec.get("source_executions") or []:
+                if e.get("source"):
+                    execs[e["source"]] = {
+                        "status": e.get("status", ""),
+                        "detail": e.get("stop_reason") or e.get("error_type") or "",
+                        "results": e.get("result_count", 0)}
+            return {"evidence_status": rec.get("evidence_status"),
+                    "result_count": rec.get("result_count"), "executions": execs}
+    return None
+
+
+_SF_HEADER = re.compile(r"^\s*Source\s+Duration\s+Results\s+Requests\s+Errors\s*$")
+_SF_ROW = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
+
+
+def parse_subfinder_stats(stderr: str) -> dict[str, dict] | None:
+    """Parse the ``-stats`` table (Source/Duration/Results/Requests/Errors).
+
+    subfinder has no machine-readable stats output; the table is printed with
+    a fixed format. We anchor on the exact header and require each row to
+    match the column shape — if the header is absent we return None
+    ("unknown"), never "success".
+    """
+    lines = _ANSI.sub("", stderr or "").splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines) if _SF_HEADER.match(l))
+    except StopIteration:
+        return None
+    out: dict[str, dict] = {}
+    for l in lines[start + 1:]:
+        if set(l.strip()) <= {"─", "-", ""}:
+            continue
+        m = _SF_ROW.match(l)
+        if not m:
+            break                       # end of table (e.g. "skipped" list)
+        name, _dur, res, req, err = m.groups()
+        res, req, err = int(res), int(req), int(err)
+        if req == 0:
+            status, detail = "skipped", "no requests"
+        elif err and not res:
+            status, detail = "failed", f"{err} error(s) / {req} request(s)"
+        elif err:
+            status, detail = "partial", f"{err} error(s) / {req} request(s)"
+        else:
+            status, detail = "completed", ""
+        out[name] = {"status": status, "detail": detail, "results": res}
+    return out
+
+
+def report_upstream(ctx: Context, tool: str, execs: dict | None, n_results: int) -> None:
+    """Translate upstream status into the module's run status."""
+    if execs is None:
+        ctx.partial(f"{tool}: upstream source status unknown (no stats emitted); "
+                    "an empty result cannot be trusted")
+        return
+    status, detail = summarize_sources(execs)
+    if status == "failed" and n_results == 0:
+        ctx.error(f"{tool}: {detail}")
+    elif status in ("failed", "partial", "unknown"):
+        ctx.partial(f"{tool}: {detail} — results may be incomplete")
+
+
 # ---- modules ----------------------------------------------------------------
 
 def _domain_arg(ctx: Context) -> str | None:
@@ -97,8 +206,10 @@ class Subfinder(Module):
         dom = _domain_arg(ctx)
         if not dom:
             return
-        code, so, se = await run([which("subfinder"), "-d", dom, "-silent", "-oJ"],
-                                 timeout=300)
+        # Not -silent: -stats (per-source Results/Requests/Errors) is only
+        # printed without it. JSON results go to stdout, logs+stats to stderr.
+        code, so, se = await run([which("subfinder"), "-d", dom, "-oJ", "-nc",
+                                  "-stats"], timeout=300)
         rows = parse_subfinder(so, dom)
         if code != 0 and not rows:
             raise RuntimeError(f"subfinder exit {code}: {(se or so).strip()[-160:]}")
@@ -107,6 +218,7 @@ class Subfinder(Module):
             ctx.add_entity(EntityType.HOST, r["host"], source=self.name,
                            rel="subdomain",
                            meta={"upstream_sources": r["sources"]})
+        report_upstream(ctx, "subfinder", parse_subfinder_stats(se), len(rows))
 
 
 @register
@@ -150,12 +262,16 @@ class TheHarvester(Module):
         dom = _domain_arg(ctx)
         if not dom:
             return
-        out = tmp_dir(f"harvester-{dom}") / "result"
-        jpath = out.with_suffix(".json")
-        jpath.unlink(missing_ok=True)
+        # theHarvester >= 5 strips directories from -f (os.path.basename) and
+        # writes NAME.json / NAME.jsonl into the *current directory*, so run it
+        # inside a scratch dir and pass a bare name.
+        work = tmp_dir(f"harvester-{dom}")
+        for ext in (".json", ".jsonl", ".xml"):
+            (work / f"result{ext}").unlink(missing_ok=True)
         code, so, se = await run(
-            [which("theHarvester"), "-d", dom, "-b", self.SOURCES, "-f", str(out)],
-            timeout=420)
+            [which("theHarvester"), "-d", dom, "-b", self.SOURCES, "-f", "result"],
+            timeout=420, cwd=str(work))
+        jpath = work / "result.json"
         if not jpath.exists():
             raise RuntimeError(f"theHarvester wrote no JSON (exit {code}): "
                                f"{(se or so).strip()[-200:]}")
@@ -169,6 +285,10 @@ class TheHarvester(Module):
         for h in res["hosts"][:150]:
             if h != dom:
                 ctx.add_entity(EntityType.HOST, h, source=self.name, rel="subdomain")
+        lpath = work / "result.jsonl"
+        summary = parse_harvester_summary(lpath.read_text()) if lpath.exists() else None
+        report_upstream(ctx, "theHarvester", summary["executions"] if summary else None,
+                        len(res["emails"]) + len(res["hosts"]))
         ctx.log(f"theHarvester: {len(res['emails'])} emails, "
                 f"{len(res['hosts'])} hosts")
 
