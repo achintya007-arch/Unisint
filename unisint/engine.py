@@ -353,6 +353,12 @@ class Engine:
         targets = targets[: self.limits.max_validations]
         if not targets:
             return
+        from .urls import GuardUnavailable
+        try:
+            client = self.safe_http
+        except GuardUnavailable as exc:
+            self.emit_log(f"link validation skipped: {exc}", level="err")
+            return
         self.emit_log(f"validating {len(targets)} link(s) (rate-limited per host)",
                       level="run")
         limiter = HostLimiter(min_interval=1.0)
@@ -360,7 +366,7 @@ class Engine:
 
         async def one(e: Entity):
             url = e.meta.get("url") or e.value
-            v = await validate_url(url, self.safe_http, limiter=limiter,
+            v = await validate_url(url, client, limiter=limiter,
                                    allow_unresolved=allow_unresolved)
             e.validation = v.to_dict()
             self._emit_entity(e)

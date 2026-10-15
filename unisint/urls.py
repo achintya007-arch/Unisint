@@ -110,6 +110,10 @@ class UnsafeTarget(Exception):
     """Raised when a destination is not a public internet address."""
 
 
+class GuardUnavailable(RuntimeError):
+    """The SSRF guard could not be installed; outbound fetches are refused."""
+
+
 def ip_is_public(ip: str) -> bool:
     try:
         addr = ipaddress.ip_address(ip)
@@ -217,7 +221,13 @@ def make_safe_client(timeout: float = 12.0) -> httpx.AsyncClient:
         if p.hostname:
             allowed.append((p.hostname, p.port or (443 if p.scheme == "https" else 80)))
     transport = httpx.AsyncHTTPTransport(verify=verify, proxy=proxy, retries=0)
-    pool = transport._pool  # httpcore pool; documented public attr in httpcore
+    # The guard hooks httpcore's network backend through httpx internals. If a
+    # future httpx changes them, fail CLOSED: never hand out an unguarded client.
+    pool = getattr(transport, "_pool", None)
+    if pool is None or not hasattr(pool, "_network_backend"):
+        raise GuardUnavailable(
+            f"cannot install SSRF guard on httpx {httpx.__version__}; "
+            "link validation and active probes are disabled")
     pool._network_backend = GuardedBackend(pool._network_backend, allowed)
     return httpx.AsyncClient(
         transport=transport, timeout=timeout, follow_redirects=False,

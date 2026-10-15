@@ -207,3 +207,44 @@ def test_validate_challenge_is_blocked_not_not_found():
              lambda r: httpx.Response(403, headers={"cf-mitigated": "challenge"},
                                       text="<title>Just a moment...</title>"))
     assert v.state == "blocked" and "challenge" in v.detail
+
+
+def test_guard_unavailable_fails_closed(monkeypatch):
+    """If httpx internals change, never hand out an unguarded client."""
+    orig = httpx.AsyncHTTPTransport.__init__
+
+    def broken(self, *a, **k):
+        orig(self, *a, **k)
+        del self._pool
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "__init__", broken)
+    with pytest.raises(urls.GuardUnavailable):
+        urls.make_safe_client()
+
+
+def test_engine_validation_skips_when_guard_unavailable(monkeypatch):
+    from unisint.engine import Engine
+    from unisint.models import EntityType
+    from unisint.pivot import Limits
+
+    def boom(*a, **k):
+        raise urls.GuardUnavailable("no guard")
+    monkeypatch.setattr(urls, "make_safe_client", boom)
+
+    async def emit(_):
+        pass
+
+    class _H:
+        async def aclose(self):
+            pass
+    e = Engine(mode="self", config={"api_keys": {}}, emit=emit, http=_H(),
+               limits=Limits(validate_links=True, time_budget=5))
+    e.add_entity(EntityType.URL, "https://example.org/x", source="input")
+    from unisint import base
+    saved = list(base._REGISTRY)
+    base._REGISTRY[:] = []
+    try:
+        asyncio.run(e.run())                         # must not raise
+    finally:
+        base._REGISTRY[:] = saved
+    assert any("link validation skipped" in l["msg"] for l in e.logs)
+    assert all(x.validation is None for x in e.entities.values())   # stays "unchecked"

@@ -25,19 +25,22 @@ password dumps, no login bypass, no SMTP probing, no face recognition.
 
 ## Quick start (Windows + WSL — recommended)
 
-Open a terminal, then:
+In a WSL Ubuntu terminal:
 
 ```bash
-wsl                                        # drop into Ubuntu
-sudo apt update && sudo apt install -y git python3 python3-venv python3-pip
+sudo apt update && sudo apt install -y git python3 python3-venv python3-pip curl libimage-exiftool-perl
+curl -LsSf https://astral.sh/uv/install.sh | sh       # needed for theHarvester (Python 3.14)
+source ~/.local/bin/env 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+go version   # subfinder/Amass: see the Go row in the tool table below
 git clone https://github.com/achintya007-arch/Unisint.git
 cd Unisint && git checkout build-unisint
-./setup.sh                                 # one command: installs, self-checks, launches
+./setup.sh                                 # venv + tools + doctor, then launches
 ```
 
 Then open **http://127.0.0.1:8777** in your Windows browser (WSL forwards
-localhost automatically). `setup.sh` is safe to re-run; after the first time
-you can just `source .venv/bin/activate && unisint`.
+localhost automatically). `setup.sh` is safe to re-run; afterwards just
+`source .venv/bin/activate && unisint`. To enable real web search, set a
+provider (see *Web search* below) and check it with `unisint search-test`.
 
 ### Other platforms
 
