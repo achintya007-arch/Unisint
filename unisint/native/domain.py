@@ -39,21 +39,20 @@ class Dns(Module):
                 found += 1
                 if rtype in ("A", "AAAA"):
                     ctx.add_entity(EntityType.IP, txt, source=self.name,
-                                   confidence=0.9, rel="resolves_to")
+                                   rel="resolves_to")
                 elif rtype == "MX":
                     host = txt.split()[-1].rstrip(".")
                     ctx.add_entity(EntityType.HOST, host, source=self.name,
-                                   confidence=0.7, rel="mail_server")
+                                   rel="mail_server")
                 elif rtype == "NS":
                     ctx.add_entity(EntityType.HOST, txt.rstrip("."),
-                                   source=self.name, confidence=0.6,
-                                   rel="name_server")
+                                   source=self.name, rel="name_server")
                 else:  # TXT
                     ctx.finding(f"TXT: {txt[:120]}", source=self.name,
-                                meta={"rtype": "TXT"}, confidence=0.5)
+                                meta={"rtype": "TXT"})
                     for e in EMAIL_RE.findall(txt):
                         ctx.add_entity(EntityType.EMAIL, e, source=self.name,
-                                       confidence=0.5, rel="mentioned")
+                                       rel="mentioned")
         ctx.log(f"DNS: {found} records")
 
 
@@ -83,17 +82,17 @@ class Rdap(Module):
         for ev in d.get("events", []):
             if ev.get("eventAction") in ("registration", "expiration"):
                 ctx.finding(f"{ev['eventAction']}: {ev.get('eventDate')}",
-                            source=self.name, meta=ev, confidence=0.7)
+                            source=self.name, meta=ev)
         for ent in d.get("entities", []):
             for item in ent.get("vcardArray", [[], []])[1:]:
                 for row in item:
                     if row and row[0] == "fn" and len(row) > 3:
                         ctx.add_entity(EntityType.ORG, row[3], source=self.name,
-                                       confidence=0.4, rel="registrant")
+                                       rel="registrant")
         raw = json.dumps(d)
         for e in set(EMAIL_RE.findall(raw)):
             ctx.add_entity(EntityType.EMAIL, e, source=self.name,
-                           confidence=0.5, rel="whois_contact")
+                           rel="whois_contact")
 
 
 @register
@@ -128,7 +127,7 @@ class CrtSh(Module):
         ctx.log(f"crt.sh: {len(subs)} unique subdomains")
         for s in sorted(subs)[:50]:
             ctx.add_entity(EntityType.HOST, s, source=self.name,
-                           confidence=0.8, rel="subdomain")
+                           rel="subdomain")
 
 
 @register
@@ -160,7 +159,7 @@ class Wayback(Module):
         ctx.log(f"wayback: {len(rows) - 1} archived URLs")
         first = rows[1][1] if len(rows[1]) > 1 else ""
         ctx.finding(f"earliest archive: {first}", source=self.name,
-                    meta={"timestamp": first}, confidence=0.6)
+                    meta={"timestamp": first})
 
 
 @register
@@ -171,33 +170,45 @@ class HttpFingerprint(Module):
     accepts = {EntityType.DOMAIN, EntityType.HOST}
     modes = {MODE_SELF, MODE_RECON}
     weight = 2
+    active = True
 
     async def run(self, ctx: Context) -> None:
-        host = ctx.entity.value
+        # Active probe: only reached for in-scope assets (pivot policy), and
+        # every request goes through the SSRF-guarded client with redirects
+        # re-validated hop by hop.
+        from ..urls import UnsafeTarget, safe_get
+
+        host = ctx.entity.value.strip().lower().rstrip(".")
+        allow_unresolved = bool(ctx.config.get("trust_proxy_resolution"))
         for scheme in ("https", "http"):
+            base_url = f"{scheme}://{host}/"
             try:
-                r = await ctx.http.get(f"{scheme}://{host}", timeout=12.0)
+                r, final, hops, body = await safe_get(
+                    ctx._engine.safe_http, base_url,
+                    allow_unresolved=allow_unresolved)
+            except UnsafeTarget as exc:
+                ctx.log(f"httpfp refused {host}: {exc}", level="warn")
+                return
             except Exception:
                 continue
             server = r.headers.get("server", "")
             powered = r.headers.get("x-powered-by", "")
             tech = ", ".join(t for t in (server, powered) if t)
             if tech:
-                ctx.finding(f"tech: {tech}", source=self.name,
-                            meta={"server": server, "x-powered-by": powered},
-                            confidence=0.6)
-            # security.txt
+                ctx.finding(f"tech: {tech}", source=self.name, source_url=final,
+                            meta={"server": server, "x-powered-by": powered,
+                                  "http_status": r.status_code})
             try:
-                st = await ctx.http.get(
-                    f"{scheme}://{host}/.well-known/security.txt", timeout=10.0)
-                if st.status_code == 200:
-                    for e in set(EMAIL_RE.findall(st.text)):
+                st, st_final, _, st_body = await safe_get(
+                    ctx._engine.safe_http, f"{scheme}://{host}/.well-known/security.txt",
+                    allow_unresolved=allow_unresolved)
+                if st.status_code == 200 and "contact:" in st_body.lower():
+                    for e in sorted(set(EMAIL_RE.findall(st_body))):
                         ctx.add_entity(EntityType.EMAIL, e, source=self.name,
-                                       confidence=0.6, rel="security_contact")
+                                       rel="security_contact", source_url=st_final)
             except Exception:
                 pass
-            # emails on the landing page
-            for e in list(set(EMAIL_RE.findall(r.text)))[:10]:
+            for e in sorted(set(EMAIL_RE.findall(body)))[:10]:
                 ctx.add_entity(EntityType.EMAIL, e, source=self.name,
-                               confidence=0.45, rel="on_site")
+                               rel="on_site", source_url=final)
             return

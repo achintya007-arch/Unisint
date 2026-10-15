@@ -32,7 +32,7 @@ class PhoneInfo(Module):
         zones = timezone.time_zones_for_number(num)
         ctx.finding(
             f"valid={valid} region={region or '?'} carrier={carr or '?'}",
-            source=self.name,
+            source=self.name, basis="derived",
             meta={
                 "valid": valid,
                 "region": region,
@@ -43,8 +43,8 @@ class PhoneInfo(Module):
                 "international": phonenumbers.format_number(
                     num, phonenumbers.PhoneNumberFormat.INTERNATIONAL),
             },
-            confidence=0.9 if valid else 0.4,
         )
         if region:
             ctx.add_entity(EntityType.LOCATION, region, source=self.name,
-                           confidence=0.4, rel="phone_region")
+                           rel="phone_region",
+                           basis="derived")

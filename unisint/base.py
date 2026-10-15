@@ -33,20 +33,35 @@ class Context:
         self._engine.emit_log(msg, level=level, module=self.entity.source)
 
     def add_entity(self, etype: EntityType, value: str, *, source: str,
-                   confidence: float = 0.5, rel: str = "related",
-                   meta: dict | None = None) -> Entity | None:
+                   confidence: float | None = None, rel: str = "related",
+                   meta: dict | None = None, basis: str | None = None,
+                   identity_link: str | None = None,
+                   source_url: str | None = None) -> Entity | None:
+        """Record an observation made while processing ``self.entity``.
+
+        basis: observed (default) | candidate | derived.
+        identity_link: how strongly this ties to the parent's owner —
+          'profile' (stated on the parent's own profile), 'proof'
+          (cryptographically verified), 'handle_match' (same handle elsewhere),
+          'weak'. Only profile/proof may be expanded further.
+        source_url: the URL the source itself supplied (never manufactured).
+        """
+        meta = dict(meta or {})
+        if identity_link:
+            meta["identity_link"] = identity_link
+        prov = {"source_url": source_url} if source_url else None
         return self._engine.add_entity(
-            etype, value, source=source, confidence=confidence,
-            parent=self.entity, rel=rel, meta=meta or {},
+            etype, value, source=source, parent=self.entity, rel=rel,
+            meta=meta, basis=basis, provenance=prov,
         )
 
     def finding(self, text: str, *, source: str, meta: dict | None = None,
-                confidence: float = 0.7) -> None:
-        """Record a free-form metadata finding attached to this entity."""
-        self._engine.add_entity(
-            EntityType.METADATA, text, source=source, confidence=confidence,
-            parent=self.entity, rel="finding", meta=meta or {},
-        )
+                confidence: float | None = None, basis: str = "observed",
+                source_url: str | None = None) -> None:
+        """Record a metadata finding attached to this entity."""
+        self.add_entity(EntityType.METADATA, text, source=source,
+                        rel="finding", meta=meta, basis=basis,
+                        source_url=source_url)
 
 
 class Module:
@@ -60,6 +75,9 @@ class Module:
     requires_key: str | None = None
     # Depth tier: higher = heavier; presets filter on this.
     weight: int = 1
+    # True if the module connects to the target itself (not a third-party
+    # API). Active modules only run on in-scope assets (see pivot.Scope).
+    active: bool = False
 
     async def available(self, engine) -> tuple[bool, str]:
         """Return (is_available, human message)."""

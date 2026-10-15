@@ -1,11 +1,60 @@
-"""Adapters for email/phone registration checkers: holehe, ignorant."""
+"""Adapters for registration checkers: holehe (email) and ignorant (phone).
+
+These tools answer "is this email/phone registered on site X?". They do not
+return a profile URL, so the result is recorded as a *registration finding*
+for the site's domain — never as an account link (the old ``https://{domain}``
+links pointed at home pages, not accounts). Rate-limited checks are reported
+as unknown, not as "not registered".
+"""
 from __future__ import annotations
 
 import csv
+import io
+import re
 
 from ..base import MODE_SELF, Context, Module, register
 from ..models import EntityType
-from ..runner import run, tmp_dir, which
+from ..runner import UnsafeArgument, run, safe_arg, tmp_dir, which
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_DOMAIN = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$", re.I)
+
+
+def parse_holehe_csv(text: str) -> dict:
+    used, limited = [], []
+    for row in csv.DictReader(io.StringIO(text)):
+        dom = (row.get("domain") or "").strip()
+        if not _DOMAIN.match(dom):
+            continue
+        if str(row.get("rateLimit", "")).lower() == "true":
+            limited.append(dom)
+        elif str(row.get("exists", "")).lower() == "true":
+            hints = {k: row[k] for k in ("emailrecovery", "phoneNumber")
+                     if row.get(k) not in (None, "", "None")}
+            used.append({"domain": dom, **hints})
+    return {"used": used, "rate_limited": limited}
+
+
+def parse_plus_lines(text: str) -> list[str]:
+    """`[+] domain ...` lines from holehe/ignorant stdout → domains."""
+    out = []
+    for line in _ANSI.sub("", text or "").splitlines():
+        line = line.strip()
+        if line.startswith("[+]"):
+            tok = line[3:].strip().split()
+            if tok and _DOMAIN.match(tok[0]):
+                out.append(tok[0].lower())
+    return out
+
+
+def _record(ctx: Context, source: str, domains: list[dict]) -> None:
+    for d in domains:
+        meta = {"kind": "registration", "domain": d["domain"]}
+        if d.get("emailrecovery"):
+            meta["recovery_hint"] = d["emailrecovery"]
+        if d.get("phoneNumber"):
+            meta["phone_hint"] = d["phoneNumber"]
+        ctx.finding(f"registered on {d['domain']}", source=source, meta=meta)
 
 
 @register
@@ -19,42 +68,33 @@ class Holehe(Module):
     weight = 2
 
     async def run(self, ctx: Context) -> None:
-        email = ctx.entity.value
-        work = tmp_dir(f"holehe-{email}")
-        # Clear any stale csv so we glob the fresh one.
+        try:
+            email = safe_arg(ctx.entity.value, "email")
+        except UnsafeArgument as exc:
+            ctx.log(str(exc), level="warn")
+            return
+        work = tmp_dir("holehe-run")
         for old in work.glob("holehe_*_results.csv"):
             old.unlink(missing_ok=True)
-        bin_ = which("holehe")
+        # -NP: skip modules that trigger password-recovery flows on sites.
         code, so, se = await run(
-            [bin_, email, "--only-used", "--no-color", "--no-clear", "-C"],
-            timeout=180, cwd=str(work),
-        )
+            [which("holehe"), "--no-color", "--no-clear", "-NP", "-C", "--", email],
+            timeout=240, cwd=str(work))
         files = sorted(work.glob("holehe_*_results.csv"))
-        if not files:
-            # holehe prints hits to stdout even without csv; parse the [+] lines
-            hits = [l for l in so.splitlines() if l.strip().startswith("[+]")]
-            for line in hits:
-                dom = line.replace("[+]", "").strip().split()[0]
-                ctx.add_entity(EntityType.ACCOUNT, f"https://{dom}",
-                               source=self.name, confidence=0.75,
-                               rel="registered_on", meta={"site": dom})
-            ctx.log(f"holehe: {len(hits)} registrations")
-            return
-        hits = 0
-        with files[-1].open() as fh:
-            for row in csv.DictReader(fh):
-                if str(row.get("exists", "")).lower() == "true":
-                    hits += 1
-                    dom = row.get("domain", "")
-                    meta = {"site": dom}
-                    if row.get("emailrecovery"):
-                        meta["recovery_hint"] = row["emailrecovery"]
-                    if row.get("phoneNumber"):
-                        meta["phone_hint"] = row["phoneNumber"]
-                    ctx.add_entity(EntityType.ACCOUNT, f"https://{dom}",
-                                   source=self.name, confidence=0.8,
-                                   rel="registered_on", meta=meta)
-        ctx.log(f"holehe: {hits} registrations")
+        if files:
+            res = parse_holehe_csv(files[-1].read_text(errors="replace"))
+        else:
+            used = parse_plus_lines(so)
+            if not used and code != 0:
+                raise RuntimeError(f"holehe exit {code}: {(se or so).strip()[-160:]}")
+            res = {"used": [{"domain": d} for d in used], "rate_limited": []}
+        _record(ctx, self.name, res["used"])
+        if res["rate_limited"]:
+            ctx.finding(f"{len(res['rate_limited'])} site(s) rate-limited — "
+                        "registration unknown", source=self.name, basis="derived",
+                        meta={"kind": "unknown", "domains": res["rate_limited"]})
+        ctx.log(f"holehe: registered on {len(res['used'])}, "
+                f"unknown {len(res['rate_limited'])}")
 
 
 @register
@@ -70,23 +110,18 @@ class Ignorant(Module):
     async def run(self, ctx: Context) -> None:
         import phonenumbers
 
-        raw = ctx.entity.value
         try:
-            num = phonenumbers.parse(raw, None)
+            num = phonenumbers.parse(ctx.entity.value, None)
         except phonenumbers.NumberParseException:
-            ctx.log("ignorant: need +country-code number", level="warn")
+            ctx.log("ignorant: need a +country-code number", level="warn")
             return
-        cc = str(num.country_code)
-        national = str(num.national_number)
-        bin_ = which("ignorant")
+        cc = safe_arg(str(num.country_code), "digits")
+        national = safe_arg(str(num.national_number), "digits")
         code, so, se = await run(
-            [bin_, cc, national, "--no-color", "--no-clear"],
-            timeout=150,
-        )
-        hits = [l for l in so.splitlines() if l.strip().startswith("[+]")]
-        for line in hits:
-            dom = line.replace("[+]", "").strip().split()[0]
-            ctx.add_entity(EntityType.ACCOUNT, f"https://{dom}",
-                           source=self.name, confidence=0.7,
-                           rel="registered_on", meta={"site": dom})
-        ctx.log(f"ignorant: {len(hits)} registrations")
+            [which("ignorant"), "--no-color", "--no-clear", "--", cc, national],
+            timeout=180)
+        used = parse_plus_lines(so)
+        if not used and code != 0:
+            raise RuntimeError(f"ignorant exit {code}: {(se or so).strip()[-160:]}")
+        _record(ctx, self.name, [{"domain": d} for d in used])
+        ctx.log(f"ignorant: registered on {len(used)}")

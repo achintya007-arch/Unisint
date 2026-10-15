@@ -34,11 +34,16 @@ class NamePermute(Module):
     weight = 1
 
     async def run(self, ctx: Context) -> None:
+        # These are guesses, not findings. They are shown as suggestions
+        # ("is this yours? scan it") and are never expanded automatically —
+        # scanning them blindly surfaces other people who share the name.
         cands = permutations(ctx.entity.value)[:12]
-        ctx.log(f"generated {len(cands)} candidate usernames")
+        ctx.log(f"generated {len(cands)} username guesses (not scanned; "
+                "confirm the ones that are yours)")
         for c in cands:
             ctx.add_entity(EntityType.USERNAME, c, source=self.name,
-                           confidence=0.35, rel="possible_username")
+                           rel="possible_username", basis="candidate",
+                           meta={"note": "generated from name — unverified guess"})
 
 
 DORKS = {
@@ -74,10 +79,12 @@ class Dorks(Module):
     weight = 1
 
     async def run(self, ctx: Context) -> None:
+        # These are links for the user to open, NOT search results — nothing
+        # is fetched here. Retrieved results come from unisint.search.
         tmpl = DORKS.get(ctx.entity.type, [])
         q = urllib.parse.quote(ctx.entity.value)
         links = [{"name": n, "url": u.format(q=q)} for n, u in tmpl]
         if links:
-            ctx.finding(f"{len(links)} search dork links",
-                        source=self.name, meta={"links": links},
-                        confidence=0.4)
+            ctx.finding(f"{len(links)} manual search link(s) (not executed)",
+                        source=self.name, basis="derived",
+                        meta={"links": links, "kind": "manual_search_links"})

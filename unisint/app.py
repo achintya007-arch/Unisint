@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from . import base, config, toolmanager
 from .detect import detect
 from .engine import Engine
+from .pivot import Limits
 from .models import EntityType
 from .runner import tmp_dir
 from .synthesis import build_dossier
@@ -23,9 +24,12 @@ app = FastAPI(title="UNISINT")
 base.load_all()
 
 PRESETS = {
-    "quick": {"depth": 1, "weight_cap": 1},
-    "standard": {"depth": 2, "weight_cap": 2},
-    "deep": {"depth": 2, "weight_cap": 3},
+    "quick": {"depth": 1, "weight_cap": 1, "time_budget": 90,
+              "max_entities": 150, "per_module_runs": 15},
+    "standard": {"depth": 2, "weight_cap": 2, "time_budget": 240,
+                 "max_entities": 400, "per_module_runs": 40},
+    "deep": {"depth": 2, "weight_cap": 3, "time_budget": 480,
+             "max_entities": 800, "per_module_runs": 80},
 }
 
 
@@ -111,6 +115,8 @@ async def ws(sock: WebSocket) -> None:
         return
 
     mode = req.get("mode", base.MODE_SELF)
+    if mode not in (base.MODE_SELF, base.MODE_RECON):
+        mode = base.MODE_SELF
     preset = PRESETS.get(req.get("preset", "standard"), PRESETS["standard"])
     cfg = config.load()
 
@@ -126,8 +132,11 @@ async def ws(sock: WebSocket) -> None:
         except Exception:
             pass
 
-    engine = Engine(mode=mode, config=cfg, emit=emit,
-                    max_depth=preset["depth"],
+    limits = Limits(depth=preset["depth"], time_budget=preset["time_budget"],
+                    max_entities=preset["max_entities"],
+                    per_module_runs=preset["per_module_runs"],
+                    validate_links=bool(req.get("validate_links")))
+    engine = Engine(mode=mode, config=cfg, emit=emit, limits=limits,
                     weight_cap=preset["weight_cap"],
                     concurrency=cfg.get("max_concurrency", 20))
 

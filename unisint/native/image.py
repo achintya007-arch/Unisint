@@ -48,8 +48,7 @@ class ExifImage(Module):
         tags = {ExifTags.TAGS.get(k, k): v for k, v in exif.items()}
         for key in ("Make", "Model", "DateTimeOriginal", "Software"):
             if tags.get(key):
-                ctx.finding(f"{key}: {tags[key]}", source=self.name,
-                            confidence=0.7)
+                ctx.finding(f"{key}: {tags[key]}", source=self.name)
         gps = tags.get("GPSInfo")
         if gps:
             g = {ExifTags.GPSTAGS.get(k, k): v for k, v in gps.items()}
@@ -58,7 +57,7 @@ class ExifImage(Module):
             if lat is not None and lon is not None:
                 ctx.add_entity(
                     EntityType.LOCATION, f"{lat},{lon}", source=self.name,
-                    confidence=0.95, rel="photo_location",
+                    rel="photo_location",
                     meta={"lat": lat, "lon": lon,
                           "map": f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=16/{lat}/{lon}"})
 
@@ -71,4 +70,4 @@ class ExifImage(Module):
             {"name": "Bing", "url": "https://www.bing.com/visualsearch"},
         ]
         ctx.finding("reverse image search (upload manually)",
-                    source=self.name, meta={"links": links}, confidence=0.3)
+                    source=self.name, meta={"links": links})

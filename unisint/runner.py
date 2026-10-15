@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,24 @@ from .config import TOOLS_DIR
 
 VENV_BIN = TOOLS_DIR / "venv" / "bin"
 GO_BIN = TOOLS_DIR / "go" / "bin"
+
+# Tools installed from source into their own venv (e.g. theHarvester 5.x via
+# `uv sync`, which needs its own Python and dependency set).
+SOURCE_VENVS = {
+    "theHarvester": TOOLS_DIR / "theHarvester-src" / ".venv" / "bin",
+}
+
+
+def search_dirs(name: str) -> list[Path]:
+    """Directories searched for ``name``, in priority order."""
+    dirs: list[Path] = []
+    for d in os.environ.get("UNISINT_TOOL_PATHS", "").split(os.pathsep):
+        if d.strip():
+            dirs.append(Path(d.strip()).expanduser())
+    if name in SOURCE_VENVS:
+        dirs.append(SOURCE_VENVS[name])
+    dirs += [VENV_BIN, GO_BIN, Path.home() / "go" / "bin"]
+    return dirs
 
 # In-memory record of tools that ran but failed this session (crash, timeout,
 # or nonzero exit), keyed by the basename of the command. Surfaced in the
@@ -31,11 +50,42 @@ def failure_counts() -> dict[str, int]:
     return dict(_FAILURES)
 
 
+class UnsafeArgument(ValueError):
+    """User/tool-derived value that is not safe to pass to a CLI tool."""
+
+
+_ARG_PATTERNS = {
+    "username": re.compile(r"^[A-Za-z0-9._\-]{1,64}$"),
+    "domain": re.compile(r"^(?=.{1,253}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+                         r"[A-Za-z]{2,63}$"),
+    "email": re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~\-]{1,64}@"
+                        r"[A-Za-z0-9.\-]{1,253}$"),
+    "digits": re.compile(r"^[0-9]{1,15}$"),
+}
+
+
+def safe_arg(value: str, kind: str) -> str:
+    """Validate a value before it becomes a CLI argument.
+
+    Arguments are always passed as a list (never through a shell), so the
+    remaining risks are option injection (values starting with '-') and
+    values that a tool would misinterpret. Anything not matching the strict
+    pattern for its kind is refused.
+    """
+    v = (value or "").strip()
+    if not v or v.startswith("-"):
+        raise UnsafeArgument(f"refused {kind} argument: {value!r}")
+    pat = _ARG_PATTERNS.get(kind)
+    if pat is None or not pat.match(v):
+        raise UnsafeArgument(f"refused {kind} argument: {value!r}")
+    return v
+
+
 def which(name: str) -> str | None:
-    """Locate a tool, preferring UNISINT's managed dirs."""
-    for base in (VENV_BIN, GO_BIN):
+    """Locate a tool: explicit overrides, managed dirs, then PATH."""
+    for base in search_dirs(name):
         cand = base / name
-        if cand.exists() and os.access(cand, os.X_OK):
+        if cand.is_file() and os.access(cand, os.X_OK):
             return str(cand)
     return shutil.which(name)
 

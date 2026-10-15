@@ -1,8 +1,9 @@
-"""Investigation engine: queue, de-dup, auto-pivot, streaming.
+"""Investigation engine: queue, de-dup with provenance, bounded pivots, streaming.
 
-The engine holds an entity graph, dispatches each new entity to every module
-that accepts it (respecting scan mode + depth), and streams events through an
-async callback so the web UI can render them live.
+Flow: seeds → queue → for each entity, ``pivot.decide`` picks which modules may
+run (with a recorded reason) → modules emit observations → observations are
+merged (provenance kept, never overwritten) → optional link validation →
+snapshot for the dossier.
 """
 from __future__ import annotations
 
@@ -12,13 +13,19 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from . import base
+from . import base, pivot
 from .base import Context, Module
-from .models import Entity, EntityType, Link
+from .models import Basis, Entity, EntityType, Link
+from .pivot import Limits, Scope
 
 EventCb = Callable[[dict[str, Any]], Awaitable[None]]
 
-USER_AGENT = "UNISINT/1.0 (+authorized-self-audit)"
+USER_AGENT = "UNISINT/2.0 (+public-source research)"
+
+# Heuristic sort weight per basis — for ordering only, never shown as a
+# probability. Corroboration is reported as a count of independent sources.
+BASIS_WEIGHT = {"seed": 1.0, "observed": 0.6, "derived": 0.4, "candidate": 0.25}
+BASIS_RANK = {"candidate": 0, "derived": 1, "observed": 2, "seed": 3}
 
 
 class Engine:
@@ -28,32 +35,56 @@ class Engine:
         mode: str,
         config: dict[str, Any],
         emit: EventCb,
-        max_depth: int = 2,
+        limits: Limits | None = None,
         weight_cap: int = 3,
         concurrency: int = 20,
+        max_depth: int | None = None,      # back-compat
+        http: httpx.AsyncClient | None = None,
+        safe_http: httpx.AsyncClient | None = None,
     ):
         self.mode = mode
         self.config = config
         self._emit = emit
-        self.max_depth = max_depth
+        self.limits = limits or Limits()
+        if max_depth is not None:
+            self.limits.depth = max_depth
         self.weight_cap = weight_cap
+        self.scope = Scope()
 
         self.entities: dict[tuple[str, str], Entity] = {}
+        self.by_id: dict[str, Entity] = {}
         self.links: list[Link] = []
         self.logs: list[dict] = []
+        self.pivots: list[dict] = []
+        self.module_runs: dict[str, int] = {}
+        self.module_status: dict[str, dict] = {}
 
         self._queue: asyncio.Queue[Entity] = asyncio.Queue()
-        self._seen_jobs: set[tuple[str, str, str]] = set()
+        self._seen_jobs: set[tuple[str, str]] = set()
         self._sem = asyncio.Semaphore(concurrency)
         self._tasks: set[asyncio.Task] = set()
         self._cancelled = False
         self._pending = 0
+        self._cap_logged = False
+        self._backlog: list[dict] = []
+        self.started = time.time()
 
-        self.http = httpx.AsyncClient(
-            timeout=20.0,
-            follow_redirects=True,
-            headers={"User-Agent": USER_AGENT},
-        )
+        self.http = http or httpx.AsyncClient(
+            timeout=20.0, follow_redirects=True,
+            headers={"User-Agent": USER_AGENT})
+        self._safe_http = safe_http
+
+    @property
+    def safe_http(self) -> httpx.AsyncClient:
+        """SSRF-guarded client for any user/target-controlled destination."""
+        if self._safe_http is None:
+            from .urls import make_safe_client
+            self._safe_http = make_safe_client()
+        return self._safe_http
+
+    @property
+    def max_depth(self) -> int:  # back-compat for older callers
+        return self.limits.depth
 
     # ---- event helpers -------------------------------------------------
     def emit_log(self, msg: str, *, level: str = "info", module: str = "") -> None:
@@ -62,10 +93,18 @@ class Engine:
         self._schedule({"type": "log", **rec})
 
     def _schedule(self, payload: dict) -> None:
-        # Fire-and-forget emit; keep ordering best-effort.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Seeded before the loop started: buffer, flushed by run().
+            self._backlog.append(payload)
+            return
         task = asyncio.create_task(self._emit(payload))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _emit_entity(self, ent: Entity) -> None:
+        self._schedule({"type": "entity", "entity": ent.to_dict()})
 
     # ---- graph ---------------------------------------------------------
     def add_entity(
@@ -74,72 +113,144 @@ class Engine:
         value: str,
         *,
         source: str,
-        confidence: float = 0.5,
+        confidence: float | None = None,     # ignored beyond back-compat
         parent: Entity | None = None,
         rel: str = "related",
         meta: dict | None = None,
+        basis: str | None = None,
+        provenance: dict | None = None,
     ) -> Entity | None:
         value = (value or "").strip()
         if not value:
             return None
-        ent = Entity(
-            type=etype, value=value, source=source,
-            confidence=confidence, meta=meta or {},
-            depth=(parent.depth + 1) if parent else 0,
-        )
+        meta = dict(meta or {})
+        if basis is None:
+            basis = Basis.SEED.value if (parent is None and source == "input") \
+                else Basis.OBSERVED.value
+        prov = {
+            "source": source,
+            "observed_at": time.time(),
+            "parent_id": parent.id if parent else None,
+            "parent_value": parent.value if parent else None,
+            "parent_type": parent.type.value if parent else None,
+            "rel": rel,
+            "source_url": meta.get("url") or None,
+        }
+        prov.update(provenance or {})
+
+        ent = Entity(type=etype, value=value, source=source, meta=meta,
+                     depth=(parent.depth + 1) if parent else 0, basis=basis,
+                     confidence=BASIS_WEIGHT.get(basis, 0.5),
+                     provenance=[prov])
         existing = self.entities.get(ent.key)
         if existing:
-            # Merge: raise confidence when corroborated by a new source.
-            if source not in existing.meta.get("sources", []):
-                existing.meta.setdefault("sources", []).append(source)
-                existing.confidence = min(
-                    1.0, existing.confidence + 0.15 * confidence + 0.05
-                )
-                self._schedule({"type": "entity", "entity": existing.to_dict()})
+            self._merge(existing, ent, prov)
             if parent:
-                self._add_link(parent.id, existing.id, rel, source)
+                self._add_link(parent.id, existing.id, rel, source, basis)
             return existing
+
+        if len(self.entities) >= self.limits.max_entities:
+            if not self._cap_logged:
+                self._cap_logged = True
+                self.emit_log(f"entity cap {self.limits.max_entities} reached — "
+                              "further results dropped (partial investigation)",
+                              level="warn")
+            return None
 
         ent.meta.setdefault("sources", [source])
         self.entities[ent.key] = ent
-        self._schedule({"type": "entity", "entity": ent.to_dict()})
+        self.by_id[ent.id] = ent
+        if parent is None and basis == Basis.SEED.value:
+            ent.meta.setdefault("identity_link", "seed")
+            self.scope.add_seed(ent)
+        # IPs that an in-scope host resolves to are in scope too.
+        if (etype == EntityType.IP and rel == "resolves_to" and parent
+                and self.scope.contains(parent)):
+            self.scope.ips.add(value.strip())
+        self._emit_entity(ent)
         if parent:
-            self._add_link(parent.id, ent.id, rel, source)
-
-        # Queue for pivoting unless it exceeds depth.
-        if ent.depth <= self.max_depth:
-            self._queue.put_nowait(ent)
-            self._pending += 1
+            self._add_link(parent.id, ent.id, rel, source, basis)
+        self._queue.put_nowait(ent)
+        self._pending += 1
         return ent
 
-    def _add_link(self, src: str, dst: str, rel: str, source: str) -> None:
-        link = Link(src=src, dst=dst, rel=rel, source=source)
+    def _merge(self, existing: Entity, new: Entity, prov: dict) -> None:
+        """Merge a repeat observation without losing earlier provenance."""
+        changed = False
+        sources = existing.meta.setdefault("sources", [existing.source])
+        if new.source not in sources:
+            sources.append(new.source)
+            existing.provenance.append(prov)
+            changed = True
+        if BASIS_RANK.get(new.basis, 0) > BASIS_RANK.get(existing.basis, 0):
+            existing.basis = new.basis
+            existing.confidence = BASIS_WEIGHT[new.basis]
+            changed = True
+        # Keep the strongest identity link seen.
+        order = ["", "weak", "handle_match", "handle_profile", "handle_proof",
+                 "profile", "proof", "seed"]
+        old_l = existing.meta.get("identity_link", "")
+        new_l = new.meta.get("identity_link", "")
+        if new_l in order and order.index(new_l) > (order.index(old_l) if old_l in order else 0):
+            existing.meta["identity_link"] = new_l
+            changed = True
+        for k, v in new.meta.items():
+            if k not in existing.meta and v not in (None, "", []):
+                existing.meta[k] = v
+                changed = True
+        if changed:
+            self._emit_entity(existing)
+
+    def _add_link(self, src: str, dst: str, rel: str, source: str, basis: str) -> None:
+        if src == dst:
+            return
+        for l in self.links:
+            if l.src == src and l.dst == dst and l.rel == rel and l.source == source:
+                return
+        link = Link(src=src, dst=dst, rel=rel, source=source, basis=basis)
         self.links.append(link)
         self._schedule({"type": "link", "link": link.to_dict()})
 
     # ---- main loop -----------------------------------------------------
     async def seed(self, etype: EntityType, value: str) -> None:
-        self.add_entity(etype, value, source="input", confidence=1.0)
+        self.add_entity(etype, value, source="input")
 
     async def run(self) -> None:
-        self.emit_log(f"engine online — mode={self.mode} depth={self.max_depth}",
+        backlog, self._backlog = self._backlog, []
+        for payload in backlog:
+            self._schedule(payload)
+        L = self.limits
+        self.emit_log(f"engine online — mode={self.mode} depth={L.depth} "
+                      f"budget={int(L.time_budget)}s cap={L.max_entities}",
                       level="ok")
+        deadline = time.monotonic() + L.time_budget
         workers = [asyncio.create_task(self._worker(i)) for i in range(8)]
-        # Wait until queue drained and all jobs done.
-        while self._pending > 0 and not self._cancelled:
-            await asyncio.sleep(0.1)
-        for w in workers:
-            w.cancel()
-        # let pending emits flush
+        try:
+            while self._pending > 0 and not self._cancelled:
+                if time.monotonic() > deadline:
+                    self.emit_log("time budget exhausted — stopping with partial "
+                                  "results", level="warn")
+                    self._cancelled = True
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+        if L.validate_links and not self._user_cancelled:
+            await self.validate_links()
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
         await self.http.aclose()
+        if self._safe_http is not None:
+            await self._safe_http.aclose()
         self.emit_log("scan complete", level="ok")
-        self._schedule({"type": "done",
-                        "entities": len(self.entities),
+        self._schedule({"type": "done", "entities": len(self.entities),
                         "links": len(self.links)})
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+    _user_cancelled = False
 
     async def _worker(self, idx: int) -> None:
         while not self._cancelled:
@@ -154,22 +265,38 @@ class Engine:
                 self._queue.task_done()
 
     async def _dispatch(self, ent: Entity) -> None:
-        mods = [
-            m for m in base.modules_for(ent.type, self.mode)
-            if m.weight <= self.weight_cap
-        ]
+        mods = [m for m in base.modules_for(ent.type, self.mode)
+                if m.weight <= self.weight_cap]
         if not mods:
             return
-        await asyncio.gather(*(self._run_module(m, ent) for m in mods))
+        run, skipped = [], []
+        for m in mods:
+            ok, reason = pivot.decide(ent, m, mode=self.mode, limits=self.limits,
+                                      scope=self.scope, module_runs=self.module_runs)
+            (run if ok else skipped).append((m, reason))
+        record = {
+            "entity_id": ent.id, "entity": f"{ent.type.value}:{ent.value}",
+            "parent_id": (ent.provenance[0].get("parent_id") if ent.provenance else None),
+            "basis": ent.basis, "depth": ent.depth, "t": time.time(),
+            "ran": [{"module": m.name, "reason": r} for m, r in run],
+            "skipped": [{"module": m.name, "reason": r} for m, r in skipped],
+        }
+        self.pivots.append(record)
+        self._schedule({"type": "pivot", "pivot": record})
+        if skipped and not run:
+            self.emit_log(f"not expanded {ent.type.value}:{ent.value} — "
+                          f"{skipped[0][1]}", level="muted")
+        await asyncio.gather(*(self._run_module(m, ent) for m, _ in run))
 
     async def _run_module(self, mod: Module, ent: Entity) -> None:
-        job = (mod.name, ent.type.value, ent.value.lower())
+        job = (mod.name, f"{ent.type.value}:{ent.key[1]}")
         if job in self._seen_jobs:
             return
         self._seen_jobs.add(job)
 
         ok, why = await mod.available(self)
         if not ok:
+            self.module_status[mod.name] = {"state": "unavailable", "detail": why}
             self.emit_log(f"[{mod.label}] skip ({why})", level="warn",
                           module=mod.name)
             return
@@ -177,21 +304,54 @@ class Engine:
         async with self._sem:
             if self._cancelled:
                 return
+            self.module_runs[mod.name] = self.module_runs.get(mod.name, 0) + 1
             self.emit_log(f"[{mod.label}] -> {ent.type}:{ent.value}",
                           level="run", module=mod.name)
-            # Mark entity source so emitted children attribute correctly.
             probe = Entity(type=ent.type, value=ent.value, source=mod.name,
-                           confidence=ent.confidence, depth=ent.depth,
-                           id=ent.id, meta=ent.meta)
+                           depth=ent.depth, id=ent.id, meta=ent.meta,
+                           basis=ent.basis, provenance=ent.provenance)
             ctx = Context(self, probe)
+            started = time.time()
             try:
                 await mod.run(ctx)
+                self.module_status.setdefault(mod.name, {"state": "ok"})
             except Exception as exc:  # modules must never crash the engine
+                self.module_status[mod.name] = {"state": "error",
+                                                "detail": str(exc)[:200]}
                 self.emit_log(f"[{mod.label}] error: {exc}", level="err",
                               module=mod.name)
+            finally:
+                self.module_status.setdefault(mod.name, {})["last_ms"] = \
+                    int((time.time() - started) * 1000)
+
+    # ---- link validation (opt-in) ---------------------------------------
+    async def validate_links(self) -> None:
+        from .urls import HostLimiter, validate_url
+        targets = [e for e in self.entities.values()
+                   if e.type in (EntityType.ACCOUNT, EntityType.URL)
+                   and e.validation is None]
+        # Most useful first: seeds/observed before candidates.
+        targets.sort(key=lambda e: -BASIS_RANK.get(e.basis, 0))
+        targets = targets[: self.limits.max_validations]
+        if not targets:
+            return
+        self.emit_log(f"validating {len(targets)} link(s) (rate-limited per host)",
+                      level="run")
+        limiter = HostLimiter(min_interval=1.0)
+        allow_unresolved = bool(self.config.get("trust_proxy_resolution"))
+
+        async def one(e: Entity):
+            url = e.meta.get("url") or e.value
+            v = await validate_url(url, self.safe_http, limiter=limiter,
+                                   allow_unresolved=allow_unresolved)
+            e.validation = v.to_dict()
+            self._emit_entity(e)
+
+        await asyncio.gather(*(one(e) for e in targets))
 
     def cancel(self) -> None:
         self._cancelled = True
+        self._user_cancelled = True
         self.emit_log("cancel requested", level="warn")
 
     # ---- export --------------------------------------------------------
@@ -200,6 +360,11 @@ class Engine:
             "entities": [e.to_dict() for e in self.entities.values()],
             "links": [l.to_dict() for l in self.links],
             "logs": self.logs,
+            "pivots": self.pivots,
+            "module_status": self.module_status,
+            "scope": {"domains": sorted(self.scope.domains),
+                      "ips": sorted(self.scope.ips)},
+            "limits": vars(self.limits),
             "mode": self.mode,
             "when": time.strftime("%Y-%m-%d %H:%M:%S"),
         }

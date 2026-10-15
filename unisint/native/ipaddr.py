@@ -33,16 +33,17 @@ class IpGeo(Module):
                                     d.get("country")) if x)
         if loc:
             ctx.add_entity(EntityType.LOCATION, loc, source=self.name,
-                           confidence=0.6, rel="geolocated",
-                           meta={"lat": d.get("lat"), "lon": d.get("lon")})
+                           rel="geolocated", basis="derived",
+                           meta={"lat": d.get("lat"), "lon": d.get("lon"),
+                                 "note": "IP geolocation estimate (ip-api)"})
         if d.get("org") or d.get("isp"):
             ctx.add_entity(EntityType.ORG, d.get("org") or d.get("isp"),
-                           source=self.name, confidence=0.5, rel="hosted_by")
+                           source=self.name, rel="hosted_by")
         if d.get("as"):
-            ctx.finding(f"ASN: {d['as']}", source=self.name, confidence=0.6)
+            ctx.finding(f"ASN: {d['as']}", source=self.name)
         if d.get("reverse"):
             ctx.add_entity(EntityType.HOST, d["reverse"], source=self.name,
-                           confidence=0.6, rel="reverse_dns")
+                           rel="reverse_dns")
 
 
 @register
@@ -67,12 +68,10 @@ class InternetDb(Module):
         ports = d.get("ports", [])
         if ports:
             ctx.finding(f"open ports: {', '.join(map(str, ports))}",
-                        source=self.name, meta={"ports": ports},
-                        confidence=0.8)
+                        source=self.name, meta={"ports": ports})
         for cve in (d.get("vulns") or [])[:20]:
             ctx.finding(f"CVE: {cve}", source=self.name,
-                        meta={"cve": cve, "severity": "see-nvd"},
-                        confidence=0.7)
+                        meta={"cve": cve, "severity": "see-nvd"})
         for host in (d.get("hostnames") or []):
             ctx.add_entity(EntityType.HOST, host, source=self.name,
-                           confidence=0.7, rel="hostname_of")
+                           rel="hostname_of")

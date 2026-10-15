@@ -61,7 +61,8 @@ def test_phone_module():
         def log(self, *a, **k):
             pass
 
-        def finding(self, text, *, source, meta=None, confidence=0.7):
+        def finding(self, text, *, source, meta=None, **kw):
+            captured["basis"] = kw.get("basis")
             captured["text"] = text
             captured["meta"] = meta
 
@@ -71,6 +72,7 @@ def test_phone_module():
     asyncio.run(PhoneInfo().run(FakeCtx()))
     assert captured["meta"]["e164"] == "+14155552671"
     assert captured["meta"]["valid"] is True
+    assert captured["basis"] == "derived"  # computed, not observed
 
 
 def test_sherlock_csv_parsing(tmp_path):
