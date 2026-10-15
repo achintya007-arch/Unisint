@@ -23,10 +23,19 @@ DEFAULTS: dict[str, Any] = {
         "hunter": "",
         "virustotal": "",
         "anthropic": "",
+        "brave": "",          # Brave Search API (web_search)
+        "google_cse_key": "", # Google Programmable Search JSON API key
+        "google_cse_cx": "",  # Programmable Search Engine ID
     },
+    "searxng_url": "",       # your own SearXNG instance (JSON format enabled)
+    # Allow link checks to hosts this machine can't resolve when a proxy is
+    # configured (the proxy resolves them). Off by default: safer.
+    "trust_proxy_resolution": False,
     "effects": True,         # UI eye-candy on by default
     "max_concurrency": 20,
 }
+
+SETTABLE = ("effects", "max_concurrency", "searxng_url", "trust_proxy_resolution")
 
 
 def _ensure_dirs() -> None:
@@ -41,7 +50,7 @@ def load() -> dict[str, Any]:
         try:
             saved = json.loads(CONFIG_PATH.read_text())
             cfg["api_keys"].update(saved.get("api_keys", {}))
-            for k in ("effects", "max_concurrency"):
+            for k in SETTABLE:
                 if k in saved:
                     cfg[k] = saved[k]
         except (json.JSONDecodeError, OSError):
@@ -51,7 +60,23 @@ def load() -> dict[str, Any]:
 
 def save(cfg: dict[str, Any]) -> None:
     _ensure_dirs()
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    # Contains API keys: create/keep it readable by the owner only.
+    fd = os.open(CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(json.dumps(cfg, indent=2))
+    os.chmod(CONFIG_PATH, 0o600)
+
+
+def secrets(cfg: dict[str, Any]) -> list[str]:
+    """Configured secret values (for log redaction)."""
+    return [v for v in (cfg.get("api_keys") or {}).values()
+            if isinstance(v, str) and len(v) >= 6]
+
+
+def redact(text: str, cfg: dict[str, Any]) -> str:
+    for s in secrets(cfg):
+        text = text.replace(s, "***")
+    return text
 
 
 def api_key(name: str) -> str:

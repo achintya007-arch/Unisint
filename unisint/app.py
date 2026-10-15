@@ -64,6 +64,8 @@ async def get_config() -> JSONResponse:
     # Mask key presence, never return the secrets themselves.
     keys = {k: bool(v) for k, v in cfg.get("api_keys", {}).items()}
     return JSONResponse({"api_keys_set": keys, "effects": cfg.get("effects"),
+                         "searxng_url": cfg.get("searxng_url", ""),
+                         "trust_proxy_resolution": cfg.get("trust_proxy_resolution", False),
                          "cases": config.list_cases()})
 
 
@@ -75,6 +77,11 @@ async def set_config(payload: dict) -> JSONResponse:
             cfg["api_keys"][k] = v
     if "effects" in payload:
         cfg["effects"] = bool(payload["effects"])
+    if "searxng_url" in payload:
+        u = str(payload["searxng_url"] or "").strip()
+        cfg["searxng_url"] = u if u.startswith(("http://", "https://")) or not u else cfg["searxng_url"]
+    if "trust_proxy_resolution" in payload:
+        cfg["trust_proxy_resolution"] = bool(payload["trust_proxy_resolution"])
     config.save(cfg)
     return JSONResponse({"ok": True})
 

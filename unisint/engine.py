@@ -88,6 +88,8 @@ class Engine:
 
     # ---- event helpers -------------------------------------------------
     def emit_log(self, msg: str, *, level: str = "info", module: str = "") -> None:
+        from .config import redact
+        msg = redact(str(msg), self.config)
         rec = {"t": time.time(), "msg": msg, "level": level, "module": module}
         self.logs.append(rec)
         self._schedule({"type": "log", **rec})

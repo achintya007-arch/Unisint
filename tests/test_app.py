@@ -95,3 +95,19 @@ def test_ws_scan_envelope_contract():
         assert "entity" in kinds          # phone metadata produced a finding
         assert dossier is not None
         assert "remediation" in dossier   # self mode attaches remediation
+
+
+def test_config_file_is_owner_only_and_logs_redacted(tmp_path, monkeypatch):
+    import stat as _stat
+
+    from unisint import config as cfgmod
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", tmp_path / "config.json")
+    monkeypatch.setattr(cfgmod, "HOME", tmp_path)
+    monkeypatch.setattr(cfgmod, "TOOLS_DIR", tmp_path / "tools")
+    monkeypatch.setattr(cfgmod, "CASES_DIR", tmp_path / "cases")
+    c = cfgmod.load()
+    c["api_keys"]["brave"] = "SUPERSECRETKEY"
+    cfgmod.save(c)
+    mode = _stat.S_IMODE((tmp_path / "config.json").stat().st_mode)
+    assert mode == 0o600
+    assert cfgmod.redact("GET ?key=SUPERSECRETKEY failed", c) == "GET ?key=*** failed"
