@@ -18,15 +18,31 @@ else
   echo "theHarvester skipped: install uv first (curl -LsSf https://astral.sh/uv/install.sh | sh)"
 fi
 
-# Go tools. subfinder needs Go >= 1.26; Go >= 1.21 fetches that automatically.
+# Go tools — pinned versions. Minimum Go comes from each pinned go.mod:
+#   subfinder v2.17.0 -> go 1.26.0     amass v4.2.0 -> go 1.19
+# A local Go >= 1.21 with GOTOOLCHAIN=auto (the default) downloads a newer
+# toolchain itself; Go < 1.21, or GOTOOLCHAIN=local, cannot.
+SUBFINDER=github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.17.0
+AMASS='github.com/owasp-amass/amass/v4/...@v4.2.0'
 if command -v go >/dev/null; then
-  GOV=$(go version | sed -E 's/.*go([0-9]+)\.([0-9]+).*/\1 \2/')
-  set -- $GOV
-  if [ "$1" -gt 1 ] || [ "$2" -ge 21 ]; then
-    GOBIN="$GOBIN" go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest || echo "subfinder install failed (see error above)"
-    GOBIN="$GOBIN" go install -v github.com/owasp-amass/amass/v4/...@master || echo "amass install failed (see error above)"
+  read -r GOMAJ GOMIN <<<"$(go env GOVERSION | sed -E 's/^go([0-9]+)\.([0-9]+).*/\1 \2/')"
+  GOTC="$(go env GOTOOLCHAIN)"
+  echo "Go $GOMAJ.$GOMIN (GOTOOLCHAIN=$GOTC)"
+  can_switch=0
+  if [ "$GOMAJ" -gt 1 ] || [ "$GOMIN" -ge 21 ]; then
+    case "$GOTC" in auto|*+auto|"") can_switch=1 ;; esac
+  fi
+  # subfinder: needs >= 1.26, or switching
+  if [ "$GOMAJ" -gt 1 ] || [ "$GOMIN" -ge 26 ] || [ "$can_switch" = 1 ]; then
+    GOBIN="$GOBIN" go install -v "$SUBFINDER" || echo "subfinder install failed (see error above)"
   else
-    echo "Go $1.$2 is too old (need >= 1.21). Install Go from https://go.dev/dl/ — apt's golang-go is too old."
+    echo "subfinder skipped: needs Go >= 1.26 (or Go >= 1.21 with GOTOOLCHAIN=auto). Install from https://go.dev/dl/"
+  fi
+  # amass: needs >= 1.19
+  if [ "$GOMAJ" -gt 1 ] || [ "$GOMIN" -ge 19 ] || [ "$can_switch" = 1 ]; then
+    GOBIN="$GOBIN" go install -v "$AMASS" || echo "amass install failed (see error above)"
+  else
+    echo "amass skipped: needs Go >= 1.19. Install from https://go.dev/dl/"
   fi
 else
   echo "Go not found: skipping subfinder/Amass. Install from https://go.dev/dl/"

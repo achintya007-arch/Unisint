@@ -106,8 +106,10 @@ async def _run() -> tuple[str, dict[str, int]]:
             rec(WARN, t["label"], f"not installed — ARSENAL or install_tools.sh ({t['kind']})")
         else:
             rec(FAIL, t["label"], f"{st} — {det}")
-    ok, why = await toolmanager.go_check()
-    rec(OK if ok else WARN, "Go toolchain (for subfinder/Amass)", why)
+    for t in toolmanager.CATALOG:
+        if t.kind == "go":
+            ok, why = await toolmanager.go_check(t.name)
+            rec(OK if ok else WARN, f"Go for {t.label} {t.spec.rsplit('@', 1)[-1]}", why)
     import shutil as _sh
     rec(OK if _sh.which("uv") else WARN, "uv (for theHarvester, needs Python 3.14)",
         "found" if _sh.which("uv") else "not found — https://docs.astral.sh/uv/")

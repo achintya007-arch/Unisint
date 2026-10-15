@@ -13,8 +13,12 @@ Install methods:
   uv-git  theHarvester: current source needs Python >= 3.14, so it is cloned
           to ~/.unisint/tools/theHarvester-src and installed with ``uv sync``
           (uv provisions the interpreter). Executable: .venv/bin/theHarvester
-  go      ``go install`` into ~/.unisint/tools/go/bin (needs Go >= 1.21 so the
-          toolchain the module requires can be fetched automatically)
+  go      ``go install`` of a PINNED version into ~/.unisint/tools/go/bin.
+          Minimum Go = the ``go`` directive in that version's go.mod
+          (verified): subfinder v2.17.0 -> go 1.26.0; amass v4.2.0 -> go 1.19.
+          An older local Go still works if it is >= 1.21 (first release with
+          toolchain switching) and GOTOOLCHAIN permits switching ("auto",
+          the default): Go then downloads the required toolchain itself.
   system  package manager (exiftool)
 """
 from __future__ import annotations
@@ -33,7 +37,7 @@ from .runner import (GO_BIN, VENV_BIN, failure_counts, run, success_counts,
 VENV_PY = VENV_BIN / "python"
 HARVESTER_DIR = TOOLS_DIR / "theHarvester-src"
 HARVESTER_REPO = "https://github.com/laramies/theHarvester"
-MIN_GO = (1, 21)   # first Go with automatic toolchain switching
+SWITCH_GO = (1, 21)   # first Go release with automatic toolchain switching
 
 
 @dataclass
@@ -44,6 +48,7 @@ class Tool:
     spec: str            # pip package / go module / system package / git repo
     purpose: str
     health: tuple[str, ...] = ("--version",)
+    min_go: tuple[int, int] | None = None   # from the pinned version's go.mod
 
 
 CATALOG: list[Tool] = [
@@ -60,11 +65,11 @@ CATALOG: list[Tool] = [
     Tool("theHarvester", "theHarvester", "uv-git", HARVESTER_REPO,
          "domain → emails & hosts (passive sources)", ("-h",)),
     Tool("subfinder", "subfinder", "go",
-         "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
-         "domain → passive subdomains", ("-version",)),
+         "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.17.0",
+         "domain → passive subdomains", ("-version",), min_go=(1, 26)),
     Tool("amass", "Amass", "go",
-         "github.com/owasp-amass/amass/v4/...@master",
-         "domain → passive DNS names", ("-version",)),
+         "github.com/owasp-amass/amass/v4/...@v4.2.0",
+         "domain → passive DNS names", ("-version",), min_go=(1, 19)),
     Tool("exiftool", "exiftool", "system", "libimage-exiftool-perl",
          "file → metadata", ("-ver",)),
 ]
@@ -152,20 +157,64 @@ def parse_go_version(text: str) -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-async def go_check() -> tuple[bool, str]:
+def _fmt(v: tuple[int, int]) -> str:
+    return f"{v[0]}.{v[1]}"
+
+
+def toolchain_can_switch(gotoolchain: str) -> bool:
+    """GOTOOLCHAIN values that allow downloading a newer toolchain."""
+    g = (gotoolchain or "auto").strip()
+    return g == "auto" or g.endswith("+auto")
+
+
+def go_requirement(local: tuple[int, int] | None, gotoolchain: str,
+                   need: tuple[int, int], label: str = "this tool") -> tuple[bool, str]:
+    """Pure decision: can ``local`` Go (with ``gotoolchain``) build a module
+    whose go.mod says ``go need``?"""
+    if local is None:
+        return False, ("Go not found. Install Go from https://go.dev/dl/ "
+                       f"({label} needs Go >= {_fmt(need)}).")
+    if local >= need:
+        return True, f"go{_fmt(local)} satisfies {label} (needs >= {_fmt(need)})"
+    if local >= SWITCH_GO and toolchain_can_switch(gotoolchain):
+        return True, (f"go{_fmt(local)} < {_fmt(need)} required by {label}; Go will "
+                      f"download go{_fmt(need)}+ automatically (GOTOOLCHAIN="
+                      f"{gotoolchain or 'auto'}; needs access to the Go module proxy)")
+    why = (f"GOTOOLCHAIN={gotoolchain} forbids downloading it"
+           if local >= SWITCH_GO else
+           f"Go {_fmt(local)} predates toolchain switching (added in Go 1.21)")
+    return False, (f"{label} needs Go >= {_fmt(need)} (go.mod of the pinned version); "
+                   f"you have go{_fmt(local)} and {why}. Install Go >= {_fmt(need)} from "
+                   f"https://go.dev/dl/, or use Go >= 1.21 with GOTOOLCHAIN=auto.")
+
+
+async def local_go() -> tuple[tuple[int, int] | None, str]:
+    """(local Go version, GOTOOLCHAIN) — as Go itself reports them."""
     go = shutil.which("go")
     if not go:
-        return False, ("Go not found. Install a current Go from https://go.dev/dl/ "
-                       "(distribution packages are often too old).")
-    code, so, se = await run([go, "version"], timeout=20, track=False)
-    v = parse_go_version(so)
-    if not v:
-        return False, f"could not read Go version: {(so + se).strip()[:120]}"
-    if v < MIN_GO:
-        return False, (f"Go {v[0]}.{v[1]} is too old: subfinder needs Go >= 1.26 and "
-                       f"Go < 1.21 cannot fetch that toolchain automatically. Install "
-                       f"Go from https://go.dev/dl/ (apt's golang-go is too old).")
-    return True, f"go{v[0]}.{v[1]}"
+        return None, ""
+    # Run outside any module so a nearby go.mod cannot trigger a switch.
+    TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    code, so, se = await run([go, "env", "GOVERSION", "GOTOOLCHAIN"], timeout=20,
+                             track=False, cwd=str(TOOLS_DIR))
+    lines = (so or "").splitlines()
+    ver = parse_go_version(lines[0]) if lines else None
+    if ver is None:   # very old Go has no GOVERSION in `go env`
+        code, so2, _ = await run([go, "version"], timeout=20, track=False,
+                                 cwd=str(TOOLS_DIR))
+        ver = parse_go_version(so2)
+    tc = lines[1].strip() if len(lines) > 1 else ""
+    return ver, tc
+
+
+async def go_check(name: str | None = None) -> tuple[bool, str]:
+    """Check Go for one pinned tool, or for all Go tools when name is None."""
+    local, tc = await local_go()
+    tools = [t for t in CATALOG if t.kind == "go" and (name is None or t.name == name)]
+    results = [go_requirement(local, tc, t.min_go or SWITCH_GO,
+                              f"{t.label} {t.spec.rsplit('@', 1)[-1]}") for t in tools]
+    ok = all(r[0] for r in results)
+    return ok, "; ".join(r[1] for r in results)
 
 
 async def _ensure_venv() -> None:
@@ -216,7 +265,7 @@ async def install(name: str) -> dict:
     elif tool.kind == "uv-git":
         return await _install_harvester()
     elif tool.kind == "go":
-        ok, why = await go_check()
+        ok, why = await go_check(name)
         if not ok:
             return {"ok": False, "msg": why}
         GO_BIN.mkdir(parents=True, exist_ok=True)

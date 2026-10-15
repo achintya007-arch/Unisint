@@ -87,8 +87,8 @@ Tool-specific requirements (verified):
 | Tool | Requirement |
 |---|---|
 | theHarvester | Current source needs **Python ≥ 3.14** → installed with **uv** into `~/.unisint/tools/theHarvester-src/.venv` (uv provisions Python). Install uv: `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| subfinder | Module requires **Go ≥ 1.26**; any Go **≥ 1.21** downloads that toolchain automatically. Ubuntu's `apt install golang-go` is too old — install Go from https://go.dev/dl/ |
-| Amass | `go install …/amass/v4/...@master` (v4.2.0). Needs direct UDP DNS to public resolvers; restricted networks fail with "unable to build the pool of untrusted resolvers". |
+| subfinder | Pinned **v2.17.0**, whose `go.mod` declares **go 1.26.0**. Works with Go ≥ 1.26, *or* any Go ≥ 1.21 with `GOTOOLCHAIN=auto` (the default), which downloads go1.26 itself via the Go module proxy. Fails with Go < 1.21 or `GOTOOLCHAIN=local`. Run `go version` / `unisint doctor` to see which applies; if needed install Go from https://go.dev/dl/ |
+| Amass | Pinned **v4.2.0** (`go.mod`: **go 1.19**). Needs direct UDP DNS to public resolvers; restricted networks fail with "unable to build the pool of untrusted resolvers". |
 | exiftool | `sudo apt install libimage-exiftool-perl` |
 
 Extra tool locations can be added with `UNISINT_TOOL_PATHS=/dir1:/dir2`.

@@ -1,10 +1,11 @@
 """Tool health states: an executable existing is not proof it works."""
 import asyncio
+import pathlib
 
 import pytest
 
 from unisint import runner, toolmanager
-from unisint.toolmanager import health_check, parse_go_version
+from unisint.toolmanager import go_requirement, health_check, parse_go_version
 
 
 def _exe(d, name, body):
@@ -73,11 +74,35 @@ def test_parse_go_version(text, v):
     assert parse_go_version(text) == v
 
 
-def test_go_too_old_message(fake_tools, monkeypatch):
-    _exe(fake_tools, "go", 'echo "go version go1.18.1 linux/amd64"')
+
+@pytest.mark.parametrize("local,tc,need,ok,frag", [
+    ((1, 26), "auto", (1, 26), True, "satisfies"),
+    ((1, 24), "auto", (1, 26), True, "download go1.26+"),       # verified live here
+    ((1, 24), "go1.24.7+auto", (1, 26), True, "download"),
+    ((1, 24), "local", (1, 26), False, "GOTOOLCHAIN=local forbids"),  # reproduced live
+    ((1, 22), "local", (1, 19), True, "satisfies"),              # amass
+    ((1, 18), "auto", (1, 26), False, "predates toolchain switching"),
+    ((1, 18), "", (1, 19), False, "predates"),
+    (None, "", (1, 26), False, "Go not found"),
+])
+def test_go_requirement_matrix(local, tc, need, ok, frag):
+    got, why = go_requirement(local, tc, need, "subfinder v2.17.0")
+    assert got is ok and frag in why
+
+
+def test_go_tools_are_pinned_with_verified_minimums():
+    gotools = {t.name: t for t in toolmanager.CATALOG if t.kind == "go"}
+    assert gotools["subfinder"].spec.endswith("@v2.17.0") and gotools["subfinder"].min_go == (1, 26)
+    assert gotools["amass"].spec.endswith("@v4.2.0") and gotools["amass"].min_go == (1, 19)
+    sh = (pathlib.Path(__file__).resolve().parents[1] / "install_tools.sh").read_text()
+    assert gotools["subfinder"].spec in sh and gotools["amass"].spec in sh
+
+
+def test_go_check_reads_go_env(fake_tools, monkeypatch):
+    _exe(fake_tools, "go", 'if [ "$1" = env ]; then echo go1.18.1; echo auto; else echo "go version go1.18.1 linux/amd64"; fi')
     monkeypatch.setenv("PATH", str(fake_tools))
-    ok, why = asyncio.run(toolmanager.go_check())
-    assert not ok and "too old" in why and "go.dev/dl" in why
+    ok, why = asyncio.run(toolmanager.go_check("subfinder"))
+    assert not ok and "predates toolchain switching" in why and "go.dev/dl" in why
 
 
 def test_harvester_install_explains_uv(monkeypatch):
