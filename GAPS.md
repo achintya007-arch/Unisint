@@ -15,13 +15,26 @@ to `~/.unisint/gaps.md`).
       VirusTotal: keys can be stored but no module reads them yet.
 - [ ] **More tools** — WhatsMyName, Blackbird, PhoneInfoga, Mastodon,
       PGP keyservers.
-- [ ] **Per-source error parsing** for theHarvester/subfinder: when every
-      upstream source fails the tool still exits 0, so UNISINT reports
-      `empty` rather than `error`.
+- [ ] **Live web search unverified with real credentials.** Only the error
+      path was exercised live (Google, fake key → auth_error). Run
+      `unisint search-test example.com` with a real provider to verify.
+- [ ] **Amass upstream status**: Amass is still judged by exit code only
+      (subfinder/theHarvester now read per-source status).
+- [ ] **Successful upstream runs of subfinder/theHarvester not observed live**
+      (all sources blocked in the dev sandbox); the success parsers are tested
+      on synthetic data in the real output format.
 - [ ] **Resume** a scan after a disconnect (partial results are saved, but
       the scan is not resumed).
 - [ ] **CVE enrichment** — show severity/summary, not just the CVE id.
 - [ ] **Reverse image search** — currently links only (manual upload).
+
+## Shipped (v2.1)
+- Per-source upstream status for theHarvester (structured JSONL) and
+  subfinder (-stats table): error / partial / empty / ok.
+- theHarvester output-path fix (it writes into CWD).
+- Pinned Go tools with verified minimum Go; per-tool Go/GOTOOLCHAIN checks.
+- Search credentials via env vars, key clearing, `unisint search-test`.
+- SSRF guard fails closed.
 
 ## Shipped (v2.0)
 - Provenance on every entity; link validation states; SSRF/DNS-rebinding guard.
