@@ -37,13 +37,21 @@ DEFAULTS: dict[str, Any] = {
 
 SETTABLE = ("effects", "max_concurrency", "searxng_url", "trust_proxy_resolution")
 
+# Credentials may come from the environment instead of the config file, so a
+# key never has to be written to disk. Env values override the file and are
+# NEVER persisted by save().
+ENV_KEYS = {"brave": "UNISINT_BRAVE_API_KEY",
+            "google_cse_key": "UNISINT_GOOGLE_CSE_KEY",
+            "google_cse_cx": "UNISINT_GOOGLE_CSE_CX"}
+ENV_SETTINGS = {"searxng_url": "UNISINT_SEARXNG_URL"}
+
 
 def _ensure_dirs() -> None:
     for d in (HOME, TOOLS_DIR, CASES_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
-def load() -> dict[str, Any]:
+def load(include_env: bool = True) -> dict[str, Any]:
     _ensure_dirs()
     cfg = json.loads(json.dumps(DEFAULTS))  # deep copy
     if CONFIG_PATH.exists():
@@ -55,11 +63,35 @@ def load() -> dict[str, Any]:
                     cfg[k] = saved[k]
         except (json.JSONDecodeError, OSError):
             pass
+    sources = {k: ("file" if v else None) for k, v in cfg["api_keys"].items()}
+    sources.update({k: ("file" if cfg.get(k) else None) for k in ENV_SETTINGS})
+    if include_env:
+        for k, var in ENV_KEYS.items():
+            if os.environ.get(var):
+                cfg["api_keys"][k] = os.environ[var].strip()
+                sources[k] = "env"
+        for k, var in ENV_SETTINGS.items():
+            if os.environ.get(var):
+                cfg[k] = os.environ[var].strip()
+                sources[k] = "env"
+    cfg["_sources"] = sources
     return cfg
 
 
 def save(cfg: dict[str, Any]) -> None:
     _ensure_dirs()
+    cfg = json.loads(json.dumps(cfg))
+    srcs = cfg.pop("_sources", {}) or {}
+    if any(v == "env" for v in srcs.values()):
+        # Never write env-provided secrets: keep whatever the file had.
+        disk = load(include_env=False)
+        for k, v in srcs.items():
+            if v != "env":
+                continue
+            if k in cfg.get("api_keys", {}):
+                cfg["api_keys"][k] = disk["api_keys"].get(k, "")
+            elif k in cfg:
+                cfg[k] = disk.get(k, "")
     # Contains API keys: create/keep it readable by the owner only.
     fd = os.open(CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:

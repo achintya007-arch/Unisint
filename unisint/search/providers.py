@@ -56,6 +56,26 @@ class Provider:
     def _parse(self, data: dict) -> list[RawResult]:  # pragma: no cover
         raise NotImplementedError
 
+    def _classify(self, r: httpx.Response) -> tuple[str, str] | None:
+        """Provider-specific (status, detail) from a structured error body,
+        or None to fall back to HTTP-status rules."""
+        return None
+
+    def _detail(self, r: httpx.Response) -> str:
+        """HTTP status plus the provider's own error message (redacted)."""
+        msg = ""
+        try:
+            body = r.json()
+            err = body.get("error") if isinstance(body, dict) else None
+            if isinstance(err, dict):
+                msg = str(err.get("message") or err.get("detail") or err.get("code") or "")
+            elif isinstance(body, dict):
+                msg = str(body.get("message") or body.get("detail") or "")
+        except Exception:
+            pass
+        from ..config import redact
+        return redact(f"HTTP {r.status_code}" + (f": {msg[:160]}" if msg else ""), self.cfg)
+
     async def search(self, client: httpx.AsyncClient, query: str, *,
                      count: int = 10, retries: int = 1,
                      backoff: float = 1.5) -> ProviderOutcome:
@@ -79,19 +99,24 @@ class Provider:
                     continue
                 return ProviderOutcome(self.name, query, "error",
                                        detail=f"{type(exc).__name__}", attempts=attempt)
+            if r.status_code != 200:
+                specific = self._classify(r)
+                if specific:
+                    return ProviderOutcome(self.name, query, specific[0],
+                                           detail=specific[1], attempts=attempt)
             if r.status_code == 429:
                 return ProviderOutcome(self.name, query, "rate_limited",
-                                       detail="HTTP 429", attempts=attempt)
+                                       detail=self._detail(r), attempts=attempt)
             if r.status_code in (401, 403):
                 status = "quota" if "quota" in r.text.lower() else "auth_error"
                 return ProviderOutcome(self.name, query, status,
-                                       detail=f"HTTP {r.status_code}", attempts=attempt)
+                                       detail=self._detail(r), attempts=attempt)
             if r.status_code >= 500 and attempt <= retries:
                 await asyncio.sleep(backoff * attempt)
                 continue
             if r.status_code != 200:
                 return ProviderOutcome(self.name, query, "error",
-                                       detail=f"HTTP {r.status_code}", attempts=attempt)
+                                       detail=self._detail(r), attempts=attempt)
             try:
                 results = self._parse(r.json())
             except (ValueError, KeyError, TypeError) as exc:
@@ -142,6 +167,31 @@ class GoogleCSEProvider(Provider):
         return await client.get(self.URL, params={
             "key": k["google_cse_key"], "cx": k["google_cse_cx"],
             "q": query, "num": min(count, 10)}, timeout=15.0)
+
+    # Google APIs report errors as {"error": {"code", "status", "errors":
+    # [{"reason"}], "details": [{"@type": ...ErrorInfo, "reason"}]}}.
+    # Seen live: a bad key -> HTTP 400, ErrorInfo.reason API_KEY_INVALID.
+    AUTH_REASONS = {"API_KEY_INVALID", "keyInvalid", "API_KEY_SERVICE_BLOCKED",
+                    "SERVICE_DISABLED", "accessNotConfigured", "forbidden",
+                    "PERMISSION_DENIED", "unregistered callers"}
+    QUOTA_REASONS = {"RATE_LIMIT_EXCEEDED", "rateLimitExceeded", "dailyLimitExceeded",
+                     "userRateLimitExceeded", "quotaExceeded", "RESOURCE_EXHAUSTED"}
+
+    def _classify(self, r):
+        try:
+            err = r.json().get("error") or {}
+        except Exception:
+            return None
+        reasons = {e.get("reason") for e in err.get("errors") or []}
+        reasons |= {d.get("reason") for d in err.get("details") or []}
+        reasons.add(err.get("status"))
+        reasons.discard(None)
+        detail = self._detail(r) + (f" [{', '.join(sorted(reasons))}]" if reasons else "")
+        if reasons & self.QUOTA_REASONS:
+            return "quota", detail
+        if reasons & self.AUTH_REASONS or r.status_code in (401, 403):
+            return "auth_error", detail
+        return None
 
     def _parse(self, data):
         if "error" in data:

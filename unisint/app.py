@@ -69,18 +69,24 @@ async def get_config() -> JSONResponse:
     cfg = config.load()
     # Mask key presence, never return the secrets themselves.
     keys = {k: bool(v) for k, v in cfg.get("api_keys", {}).items()}
+    sources = cfg.get("_sources", {})
     return JSONResponse({"api_keys_set": keys, "effects": cfg.get("effects"),
+                         "key_sources": {k: sources.get(k) for k in keys},
                          "searxng_url": cfg.get("searxng_url", ""),
+                         "searxng_source": sources.get("searxng_url"),
                          "trust_proxy_resolution": cfg.get("trust_proxy_resolution", False),
                          "cases": config.list_cases()})
 
 
 @app.post("/api/config")
 async def set_config(payload: dict) -> JSONResponse:
-    cfg = config.load()
+    cfg = config.load(include_env=False)   # never round-trip env secrets
     for k, v in (payload.get("api_keys") or {}).items():
-        if v:  # only overwrite when a non-empty value is supplied
-            cfg["api_keys"][k] = v
+        if k in cfg["api_keys"] and isinstance(v, str) and v.strip():
+            cfg["api_keys"][k] = v.strip()
+    for k in payload.get("clear_keys") or []:
+        if k in cfg["api_keys"]:
+            cfg["api_keys"][k] = ""
     if "effects" in payload:
         cfg["effects"] = bool(payload["effects"])
     if "searxng_url" in payload:

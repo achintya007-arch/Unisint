@@ -114,6 +114,18 @@ async def _run() -> tuple[str, dict[str, int]]:
     rec(OK if _sh.which("uv") else WARN, "uv (for theHarvester, needs Python 3.14)",
         "found" if _sh.which("uv") else "not found — https://docs.astral.sh/uv/")
 
+    # Search providers (configuration only; `unisint search-test` runs a query)
+    lines.append("\n[ SEARCH PROVIDERS ]")
+    from .search import configured_providers
+    cfg = config.load()
+    provs = configured_providers(cfg)
+    if provs:
+        for p in provs:
+            rec(OK, f"{p.name} configured", "run `unisint search-test example.com` to verify live")
+    else:
+        rec(WARN, "no web-search provider configured",
+            "set UNISINT_BRAVE_API_KEY, or UNISINT_GOOGLE_CSE_KEY+_CX, or UNISINT_SEARXNG_URL")
+
     # Network
     lines.append("\n[ NETWORK REACHABILITY ]")
     for status, name, detail in await _check_endpoints():

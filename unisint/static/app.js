@@ -395,14 +395,26 @@
   const KEY_NAMES = [['brave', 'Brave Search API key'], ['google_cse_key', 'Google Programmable Search key'], ['google_cse_cx', 'Google search engine ID (cx)']];
   async function loadConfig() {
     const d = await (await fetch('/api/config')).json();
+    const src = d.key_sources || {};
     const root = $('#keys'); root.replaceChildren();
     KEY_NAMES.forEach(([k, label]) => {
       const lab = el('label'); lab.appendChild(el('span', null, label));
-      const inp = el('input'); inp.type = 'password'; inp.dataset.key = k;
-      inp.placeholder = d.api_keys_set[k] ? '•••• set' : 'not set';
-      lab.appendChild(inp); root.appendChild(lab);
+      const inp = el('input'); inp.type = 'password'; inp.dataset.key = k; inp.autocomplete = 'off';
+      if (src[k] === 'env') { inp.disabled = true; inp.placeholder = 'set via environment variable'; }
+      else inp.placeholder = d.api_keys_set[k] ? '•••• saved in config.json' : 'not set';
+      lab.appendChild(inp);
+      if (src[k] === 'file') {
+        const x = el('button', 'btn sm', 'CLEAR'); x.type = 'button';
+        x.onclick = async () => {
+          await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear_keys: [k] }) });
+          log(label + ' cleared', 'ok'); loadConfig(); loadArsenal(false);
+        };
+        lab.appendChild(x);
+      }
+      root.appendChild(lab);
     });
     $('#searxng-url').value = d.searxng_url || '';
+    $('#searxng-url').disabled = d.searxng_source === 'env';
     $('#trust-proxy').checked = !!d.trust_proxy_resolution;
     $('#fx-toggle').checked = d.effects !== false;
     const cases = $('#cases'); cases.replaceChildren();
@@ -410,11 +422,12 @@
   }
   async function saveKeys() {
     const keys = {};
-    document.querySelectorAll('#keys input').forEach(i => { if (i.value) keys[i.dataset.key] = i.value; });
-    await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      api_keys: keys, effects: $('#fx-toggle').checked, searxng_url: $('#searxng-url').value,
-      trust_proxy_resolution: $('#trust-proxy').checked }) });
-    log('settings saved', 'ok'); loadConfig(); loadArsenal(false);
+    document.querySelectorAll('#keys input').forEach(i => { if (i.value && !i.disabled) keys[i.dataset.key] = i.value; });
+    const body = { api_keys: keys, effects: $('#fx-toggle').checked, trust_proxy_resolution: $('#trust-proxy').checked };
+    if (!$('#searxng-url').disabled) body.searxng_url = $('#searxng-url').value;
+    const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    document.querySelectorAll('#keys input').forEach(i => { i.value = ''; });   // never keep secrets in the DOM
+    log(r.ok ? 'settings saved' : 'settings NOT saved', r.ok ? 'ok' : 'err'); loadConfig(); loadArsenal(false);
   }
 
   /* ---------- EXPORT (server-rendered from the same dossier) ---------- */

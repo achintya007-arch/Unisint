@@ -8,11 +8,16 @@ import uvicorn
 
 
 def main() -> None:
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "search-test":
+        from . import searchtest
+        raise SystemExit(searchtest.main(sys.argv[2:]))
     ap = argparse.ArgumentParser(description="UNISINT OSINT console")
     ap.add_argument("command", nargs="?", default="serve",
-                    choices=["serve", "doctor"],
-                    help="'serve' (default) launches the UI; "
-                         "'doctor' runs a self-check")
+                    choices=["serve", "doctor", "search-test"],
+                    help="'serve' (default) launches the UI; 'doctor' runs a "
+                         "self-check; 'search-test VALUE --type T' runs one live "
+                         "search through the full pipeline")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--no-browser", action="store_true")

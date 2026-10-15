@@ -148,6 +148,22 @@ Real retrieval — not generated Google links — through any of:
 | Google Programmable Search JSON API | key + search engine ID (cx). Google has closed this API to new customers; existing keys still work for now. |
 | Your own SearXNG instance | base URL (enable `json` in `search.formats`) |
 
+Credentials can be given as **environment variables** instead (they override
+the file and are never written to it): `UNISINT_BRAVE_API_KEY`,
+`UNISINT_GOOGLE_CSE_KEY` + `UNISINT_GOOGLE_CSE_CX`, `UNISINT_SEARXNG_URL`.
+Verify a provider with one real query through the whole pipeline (provider →
+normalise/dedupe → engine → dossier → HTML/CSV), without printing the key:
+
+```bash
+unisint search-test example.com                 # domain templates (RECON)
+unisint search-test --type username yourhandle  # SELF-AUDIT templates
+```
+
+It prints each call's status (`ok`, `empty`, `auth_error`, `quota`,
+`rate_limited`, `timeout`, `error`), the titles/URLs/snippets returned, and
+whether every URL survived each stage. It exits non-zero unless the live
+pipeline produced results.
+
 Without a provider the web-search module reports itself `unavailable`, and
 the old dork links are offered as clearly-labelled *manual search links*.
 Query templates can be overridden with `~/.unisint/search_queries.json`.
