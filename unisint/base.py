@@ -32,6 +32,36 @@ class Context:
     def log(self, msg: str, level: str = "info") -> None:
         self._engine.emit_log(msg, level=level, module=self.entity.source)
 
+    def error(self, msg: str) -> None:
+        """Report that this run FAILED (network/HTTP/parse), so the run is
+        recorded as an error — not as a successful lookup with no results."""
+        self.failed = msg
+        self._engine.emit_log(msg, level="err", module=self.entity.source)
+
+    failed: str | None = None
+    added: int = 0
+
+    def check_http(self, resp, service: str) -> bool:
+        """True for 200. 404 = an honest 'not found' (empty run); 429 and any
+        other status = a failed lookup, recorded as an error."""
+        code = resp.status_code
+        if code == 200:
+            return True
+        reason = ""
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                reason = str(body.get("message") or body.get("error") or "")[:140]
+        except Exception:
+            pass
+        if code == 404:
+            self.log(f"{service}: not found", level="muted")
+        elif code == 429:
+            self.error(f"{service}: rate limited (HTTP 429)")
+        else:
+            self.error(f"{service}: HTTP {code}" + (f" — {reason}" if reason else ""))
+        return False
+
     def add_entity(self, etype: EntityType, value: str, *, source: str,
                    confidence: float | None = None, rel: str = "related",
                    meta: dict | None = None, basis: str | None = None,
@@ -50,10 +80,13 @@ class Context:
         if identity_link:
             meta["identity_link"] = identity_link
         prov = {"source_url": source_url} if source_url else None
-        return self._engine.add_entity(
+        ent = self._engine.add_entity(
             etype, value, source=source, parent=self.entity, rel=rel,
             meta=meta, basis=basis, provenance=prov,
         )
+        if ent is not None:
+            self.added += 1   # observations made by THIS run (not global count)
+        return ent
 
     def finding(self, text: str, *, source: str, meta: dict | None = None,
                 confidence: float | None = None, basis: str = "observed",

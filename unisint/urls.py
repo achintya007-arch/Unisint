@@ -341,6 +341,9 @@ async def validate_url(url: str, client: httpx.AsyncClient, *,
     """Classify ``url``. Never raises; failures become states."""
     norm = normalize_url(url)
     if not norm:
+        h = url_host(url or "") if "://" in (url or "") else ""
+        if h and (h in _BAD_HOSTNAMES or h.endswith(_BAD_SUFFIXES)):
+            return Validation(state="unsafe", detail=f"refused hostname: {h}")
         return Validation(state="invalid", detail="malformed or non-http(s) URL")
     host = url_host(norm)
     lock = await limiter.wait(host) if limiter else None

@@ -41,13 +41,25 @@ def search_dirs(name: str) -> list[Path]:
 _FAILURES: dict[str, int] = {}
 
 
+_SUCCESSES: dict[str, int] = {}
+
+
 def record_failure(binary: str) -> None:
     name = os.path.basename(binary)
     _FAILURES[name] = _FAILURES.get(name, 0) + 1
 
 
+def record_success(binary: str) -> None:
+    name = os.path.basename(binary)
+    _SUCCESSES[name] = _SUCCESSES.get(name, 0) + 1
+
+
 def failure_counts() -> dict[str, int]:
     return dict(_FAILURES)
+
+
+def success_counts() -> dict[str, int]:
+    return dict(_SUCCESSES)
 
 
 class UnsafeArgument(ValueError):
@@ -96,10 +108,12 @@ async def run(
     timeout: float = 120.0,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
+    track: bool = True,
 ) -> tuple[int, str, str]:
     """Execute ``cmd``; return (returncode, stdout, stderr).
 
-    A timeout kills the process group and returns code 124.
+    A timeout kills the process and returns code 124. ``track=False`` keeps
+    health checks out of the operational success/failure counters.
     """
     full_env = {**os.environ, **(env or {})}
     try:
@@ -121,12 +135,13 @@ async def run(
         except ProcessLookupError:
             pass
         await proc.wait()
-        record_failure(cmd[0])
+        if track:
+            record_failure(cmd[0])
         return 124, "", f"timeout after {timeout}s"
 
     rc = proc.returncode or 0
-    if rc not in (0,):
-        record_failure(cmd[0])
+    if track:
+        (record_failure if rc != 0 else record_success)(cmd[0])
     return (
         rc,
         out.decode("utf-8", "replace"),

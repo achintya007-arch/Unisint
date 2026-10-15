@@ -194,3 +194,16 @@ def test_validate_invalid_and_unresolvable():
     assert _run("not a url", lambda r: httpx.Response(200)).state == "invalid"
     v = _run("https://unknown.example/x", lambda r: httpx.Response(200))
     assert v.state == "error" and "dns_unresolved" in v.detail
+
+
+def test_validate_localhost_is_unsafe_not_invalid():
+    assert _run("http://localhost/admin", lambda r: httpx.Response(200)).state == "unsafe"
+    assert _run("http://printer.local/", lambda r: httpx.Response(200)).state == "unsafe"
+
+
+def test_validate_challenge_is_blocked_not_not_found():
+    # Seen live on gitlab.com for a non-existent user: a 403 challenge page.
+    v = _run("https://site.example/u/ghost",
+             lambda r: httpx.Response(403, headers={"cf-mitigated": "challenge"},
+                                      text="<title>Just a moment...</title>"))
+    assert v.state == "blocked" and "challenge" in v.detail

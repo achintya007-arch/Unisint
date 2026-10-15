@@ -22,12 +22,13 @@ class IpGeo(Module):
                 f"http://ip-api.com/json/{ip}"
                 "?fields=status,country,regionName,city,isp,org,as,reverse,lat,lon")
         except Exception as exc:
-            ctx.log(f"ip-api failed: {exc}", level="warn")
+            ctx.error(f"ip-api failed: {exc}")
             return
-        if r.status_code != 200:
+        if not ctx.check_http(r, "ip-api"):
             return
         d = r.json()
         if d.get("status") != "success":
+            ctx.error(f"ip-api: {d.get('message', 'lookup failed')}")
             return
         loc = ", ".join(x for x in (d.get("city"), d.get("regionName"),
                                     d.get("country")) if x)
@@ -60,9 +61,12 @@ class InternetDb(Module):
         try:
             r = await ctx.http.get(f"https://internetdb.shodan.io/{ip}")
         except Exception as exc:
-            ctx.log(f"internetdb failed: {exc}", level="warn")
+            ctx.error(f"internetdb failed: {exc}")
             return
-        if r.status_code != 200:
+        if r.status_code == 404:
+            ctx.log("internetdb: no data for this IP", level="muted")
+            return
+        if not ctx.check_http(r, "internetdb"):
             return
         d = r.json()
         ports = d.get("ports", [])

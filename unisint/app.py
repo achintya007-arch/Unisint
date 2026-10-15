@@ -49,7 +49,14 @@ async def arsenal() -> JSONResponse:
                      "modes": sorted(m.modes), "weight": m.weight,
                      "available": ok, "why": why,
                      "needs_tool": m.requires_tool, "needs_key": m.requires_key})
+    await toolmanager.health_all()          # cached; cheap after first call
     return JSONResponse({"tools": toolmanager.status(), "modules": mods})
+
+
+@app.post("/api/health")
+async def recheck_health() -> JSONResponse:
+    await toolmanager.health_all(force=True)
+    return JSONResponse({"tools": toolmanager.status()})
 
 
 @app.post("/api/install/{name}")

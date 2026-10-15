@@ -215,3 +215,66 @@ def test_engine_time_budget_partial():
         e.add_entity(EntityType.USERNAME, "alice", source="input")
         asyncio.run(asyncio.wait_for(e.run(), timeout=10))
     assert any("time budget" in l["msg"] for l in e.logs)
+
+
+def test_module_status_is_honest():
+    """Regression: modules that swallowed network errors were reported 'ok'."""
+    class Fails(Module):
+        name, label, category = "fails", "Fails", "domain"
+        accepts = {EntityType.DOMAIN}
+        modes = {MODE_SELF, MODE_RECON}
+
+        async def run(self, ctx):
+            ctx.error("svc: HTTP 403")
+
+    class Empty(Fails):
+        name = "empty"
+
+        async def run(self, ctx):
+            pass
+
+    class Finds(Fails):
+        name = "finds"
+
+        async def run(self, ctx):
+            ctx.add_entity(EntityType.HOST, "a.corp.com", source=self.name)
+
+    class Raises(Fails):
+        name = "raises"
+
+        async def run(self, ctx):
+            raise RuntimeError("tool exit 2")
+
+    with _Registry([Fails(), Empty(), Finds(), Raises()]):
+        e = make_engine(mode=MODE_RECON)
+        e.add_entity(EntityType.DOMAIN, "corp.com", source="input")
+        asyncio.run(e.run())
+    st = {k: v["state"] for k, v in e.module_status.items()}
+    assert st == {"fails": "error", "empty": "empty", "finds": "ok", "raises": "error"}
+    assert "403" in e.module_status["fails"]["last_error"]
+
+
+def test_module_status_not_credited_with_concurrent_modules_findings():
+    """Regression: 'ok' was inferred from the global entity count, so a module
+    that found nothing was credited with a concurrent module's results."""
+    class Slowfind(Module):
+        name, label, category = "slowfind", "S", "domain"
+        accepts = {EntityType.DOMAIN}
+        modes = {MODE_RECON}
+
+        async def run(self, ctx):
+            await asyncio.sleep(0.05)
+            ctx.add_entity(EntityType.HOST, "x.corp.com", source=self.name)
+
+    class Nothing(Slowfind):
+        name = "nothing"
+
+        async def run(self, ctx):
+            await asyncio.sleep(0.2)
+
+    with _Registry([Slowfind(), Nothing()]):
+        e = make_engine(mode=MODE_RECON)
+        e.add_entity(EntityType.DOMAIN, "corp.com", source="input")
+        asyncio.run(e.run())
+    assert e.module_status["slowfind"]["state"] == "ok"
+    assert e.module_status["nothing"]["state"] == "empty"

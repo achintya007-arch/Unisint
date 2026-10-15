@@ -38,13 +38,12 @@ class Gravatar(Module):
         try:
             r = await ctx.http.get(f"https://en.gravatar.com/{h}.json")
         except Exception as exc:
-            ctx.log(f"gravatar request failed: {exc}", level="warn")
+            ctx.error(f"gravatar request failed: {exc}")
             return
         if r.status_code == 404:
             ctx.log("no public gravatar profile", level="muted")
             return
-        if r.status_code != 200:
-            ctx.log(f"gravatar HTTP {r.status_code}", level="warn")
+        if not ctx.check_http(r, "gravatar"):
             return
         try:
             data = r.json()["entry"][0]
@@ -87,13 +86,15 @@ class GitHub(Module):
         try:
             r = await ctx.http.get(f"https://api.github.com/users/{u}")
         except Exception as exc:
-            ctx.log(f"github request failed: {exc}", level="warn")
+            ctx.error(f"github request failed: {exc}")
             return
         if r.status_code == 404:
             ctx.log(f"github: no user '{u}'", level="muted")
             return
-        if r.status_code != 200:
-            ctx.log(f"github HTTP {r.status_code} (rate limit?)", level="warn")
+        if r.status_code == 403 and r.headers.get("x-ratelimit-remaining") == "0":
+            ctx.error("github: API rate limit exhausted (60/h unauthenticated)")
+            return
+        if not ctx.check_http(r, "github"):
             return
         d = r.json()
         url = d.get("html_url")
@@ -165,10 +166,9 @@ class GitLab(Module):
             r = await ctx.http.get("https://gitlab.com/api/v4/users",
                                    params={"username": u})
         except Exception as exc:
-            ctx.log(f"gitlab request failed: {exc}", level="warn")
+            ctx.error(f"gitlab request failed: {exc}")
             return
-        if r.status_code != 200:
-            ctx.log(f"gitlab HTTP {r.status_code}", level="warn")
+        if not ctx.check_http(r, "gitlab"):
             return
         arr = r.json()
         if not arr:
@@ -201,10 +201,9 @@ class Reddit(Module):
             r = await ctx.http.get(f"https://www.reddit.com/user/{u}/about.json",
                                    headers={"User-Agent": "unisint/2.0"})
         except Exception as exc:
-            ctx.log(f"reddit request failed: {exc}", level="warn")
+            ctx.error(f"reddit request failed: {exc}")
             return
-        if r.status_code != 200:
-            ctx.log(f"reddit HTTP {r.status_code}", level="muted")
+        if not ctx.check_http(r, "reddit"):
             return
         try:
             d = r.json()["data"]
@@ -239,9 +238,9 @@ class Keybase(Module):
             r = await ctx.http.get("https://keybase.io/_/api/1.0/user/lookup.json",
                                    params={"usernames": u})
         except Exception as exc:
-            ctx.log(f"keybase request failed: {exc}", level="warn")
+            ctx.error(f"keybase request failed: {exc}")
             return
-        if r.status_code != 200:
+        if not ctx.check_http(r, "keybase"):
             return
         try:
             them = r.json().get("them", [])

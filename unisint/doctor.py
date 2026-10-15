@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import platform
 import sys
-from typing import Any
+from typing import Any  # noqa: F401
 
 from . import base, config, toolmanager
 
@@ -97,14 +97,21 @@ async def _run() -> tuple[str, dict[str, int]]:
             "ready" if ok else why)
 
     # Wrapped tools
-    lines.append("\n[ WRAPPED TOOLS ]")
+    lines.append("\n[ WRAPPED TOOLS ]  (health-checked, not just 'file exists')")
+    await toolmanager.health_all(force=True)
     for t in toolmanager.status():
-        if t["installed"] and not t["failures"]:
-            rec(OK, t["label"], "online")
-        elif t["installed"]:
-            rec(WARN, t["label"], f"installed but {t['failures']} failure(s)")
+        st, det = t["state"], t["detail"]
+        if st in ("runnable", "operational"):
+            rec(OK, t["label"], f"{st} — {det}" if det else st)
+        elif st == "unavailable":
+            rec(WARN, t["label"], f"not installed — ARSENAL or install_tools.sh ({t['kind']})")
         else:
-            rec(WARN, t["label"], f"missing — install via ARSENAL ({t['kind']})")
+            rec(FAIL, t["label"], f"{st} — {det}")
+    ok, why = await toolmanager.go_check()
+    rec(OK if ok else WARN, "Go toolchain (for subfinder/Amass)", why)
+    import shutil as _sh
+    rec(OK if _sh.which("uv") else WARN, "uv (for theHarvester, needs Python 3.14)",
+        "found" if _sh.which("uv") else "not found — https://docs.astral.sh/uv/")
 
     # Network
     lines.append("\n[ NETWORK REACHABILITY ]")

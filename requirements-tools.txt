@@ -5,4 +5,3 @@ maigret
 holehe
 socialscan
 ignorant
-theHarvester

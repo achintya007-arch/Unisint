@@ -298,7 +298,7 @@ class Engine:
 
         ok, why = await mod.available(self)
         if not ok:
-            self.module_status[mod.name] = {"state": "unavailable", "detail": why}
+            self.module_status[mod.name] = {"state": "unavailable", "last_error": why}
             self.emit_log(f"[{mod.label}] skip ({why})", level="warn",
                           module=mod.name)
             return
@@ -314,17 +314,29 @@ class Engine:
                            basis=ent.basis, provenance=ent.provenance)
             ctx = Context(self, probe)
             started = time.time()
+            st = self.module_status.setdefault(
+                mod.name, {"runs": 0, "ok": 0, "empty": 0, "errors": 0,
+                           "last_error": ""})
+            st["runs"] += 1
             try:
                 await mod.run(ctx)
-                self.module_status.setdefault(mod.name, {"state": "ok"})
+                if ctx.failed:
+                    st["errors"] += 1
+                    st["last_error"] = ctx.failed[:200]
+                elif ctx.added:
+                    st["ok"] += 1
+                else:
+                    st["empty"] += 1      # ran fine, found nothing
             except Exception as exc:  # modules must never crash the engine
-                self.module_status[mod.name] = {"state": "error",
-                                                "detail": str(exc)[:200]}
+                st["errors"] += 1
+                st["last_error"] = f"{type(exc).__name__}: {exc}"[:200]
                 self.emit_log(f"[{mod.label}] error: {exc}", level="err",
                               module=mod.name)
             finally:
-                self.module_status.setdefault(mod.name, {})["last_ms"] = \
-                    int((time.time() - started) * 1000)
+                st["last_ms"] = int((time.time() - started) * 1000)
+                st["state"] = ("error" if st["errors"] and not (st["ok"] or st["empty"])
+                               else "partial" if st["errors"]
+                               else "ok" if st["ok"] else "empty")
 
     # ---- link validation (opt-in) ---------------------------------------
     async def validate_links(self) -> None:

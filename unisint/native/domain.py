@@ -21,18 +21,24 @@ class Dns(Module):
     weight = 1
 
     async def run(self, ctx: Context) -> None:
-        import asyncio
-
         import dns.asyncresolver
+        import dns.exception
+        import dns.resolver
 
         dom = ctx.entity.value
         res = dns.asyncresolver.Resolver()
         res.lifetime = 8.0
-        found = 0
+        found, failures = 0, {}
         for rtype in ("A", "AAAA", "MX", "NS", "TXT"):
             try:
                 ans = await res.resolve(dom, rtype)
-            except Exception:
+            except dns.resolver.NoAnswer:
+                continue                       # record type simply absent
+            except dns.resolver.NXDOMAIN:
+                ctx.log(f"DNS: {dom} does not exist (NXDOMAIN)", level="muted")
+                return
+            except (dns.exception.DNSException, OSError) as exc:
+                failures[rtype] = type(exc).__name__
                 continue
             for rec in ans:
                 txt = rec.to_text()
@@ -53,6 +59,9 @@ class Dns(Module):
                     for e in EMAIL_RE.findall(txt):
                         ctx.add_entity(EntityType.EMAIL, e, source=self.name,
                                        rel="mentioned")
+        if failures and not found:
+            ctx.error(f"DNS lookups failed for {dom}: {failures}")
+            return
         ctx.log(f"DNS: {found} records")
 
 
@@ -70,10 +79,9 @@ class Rdap(Module):
         try:
             r = await ctx.http.get(f"https://rdap.org/domain/{dom}")
         except Exception as exc:
-            ctx.log(f"rdap failed: {exc}", level="warn")
+            ctx.error(f"rdap failed: {exc}")
             return
-        if r.status_code != 200:
-            ctx.log("no RDAP record", level="muted")
+        if not ctx.check_http(r, "rdap"):
             return
         try:
             d = r.json()
@@ -110,13 +118,14 @@ class CrtSh(Module):
             r = await ctx.http.get(
                 f"https://crt.sh/?q=%25.{dom}&output=json", timeout=30.0)
         except Exception as exc:
-            ctx.log(f"crt.sh failed: {exc}", level="warn")
+            ctx.error(f"crt.sh failed: {exc}")
             return
-        if r.status_code != 200:
+        if not ctx.check_http(r, "crt.sh"):
             return
         try:
             rows = r.json()
         except Exception:
+            ctx.error("crt.sh: unparseable JSON (service often returns HTML when overloaded)")
             return
         subs: set[str] = set()
         for row in rows:
@@ -146,13 +155,14 @@ class Wayback(Module):
                 "https://web.archive.org/cdx/search/cdx"
                 f"?url={target}&output=json&limit=200&collapse=urlkey")
         except Exception as exc:
-            ctx.log(f"wayback failed: {exc}", level="warn")
+            ctx.error(f"wayback failed: {exc}")
             return
-        if r.status_code != 200:
+        if not ctx.check_http(r, "wayback"):
             return
         try:
             rows = r.json()
         except Exception:
+            ctx.error("wayback: unparseable response")
             return
         if len(rows) <= 1:
             return
@@ -180,6 +190,7 @@ class HttpFingerprint(Module):
 
         host = ctx.entity.value.strip().lower().rstrip(".")
         allow_unresolved = bool(ctx.config.get("trust_proxy_resolution"))
+        errors: dict[str, str] = {}
         for scheme in ("https", "http"):
             base_url = f"{scheme}://{host}/"
             try:
@@ -189,7 +200,8 @@ class HttpFingerprint(Module):
             except UnsafeTarget as exc:
                 ctx.log(f"httpfp refused {host}: {exc}", level="warn")
                 return
-            except Exception:
+            except Exception as exc:
+                errors[scheme] = f"{type(exc).__name__}: {exc}"[:120]
                 continue
             server = r.headers.get("server", "")
             powered = r.headers.get("x-powered-by", "")
@@ -212,3 +224,4 @@ class HttpFingerprint(Module):
                 ctx.add_entity(EntityType.EMAIL, e, source=self.name,
                                rel="on_site", source_url=final)
             return
+        ctx.error(f"httpfp: {host} unreachable over https/http — {errors}")
