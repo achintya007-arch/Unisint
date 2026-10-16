@@ -90,7 +90,7 @@ def test_active_module_requires_scope_even_for_seed_type_values():
     s = Scope(domains={"corp.com"})
     active = M("httpfp", active=True)
     ok, why = d(ent(EntityType.HOST, "third-party.net"), m=active, scope=s)
-    assert not ok and "out of scope" in why
+    assert not ok and "outside authorized scope" in why
     assert d(ent(EntityType.HOST, "www.corp.com"), m=active, scope=s)[0]
 
 

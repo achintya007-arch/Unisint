@@ -15,10 +15,12 @@ Principles
 """
 from __future__ import annotations
 
-import ipaddress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .models import Basis, Entity, EntityType
+# Scope policy lives in scope.py; re-exported here so existing imports
+# (`from .pivot import Scope, Limits`) keep working.
+from .scope import ScopePolicy as Scope  # noqa: F401
 
 # Identity links strong enough to expand from (set by first-party modules).
 EXPANDABLE_LINKS = {"profile", "proof", "seed"}
@@ -41,50 +43,18 @@ class Limits:
     max_validations: int = 60
 
 
-@dataclass
-class Scope:
-    """Assets the user is authorised to actively probe."""
-    domains: set[str] = field(default_factory=set)
-    ips: set[str] = field(default_factory=set)
-
-    def add_seed(self, ent: Entity) -> None:
-        v = ent.value.strip().lower().rstrip(".")
-        if ent.type in (EntityType.DOMAIN, EntityType.HOST):
-            self.domains.add(v)
-        elif ent.type == EntityType.IP:
-            self.ips.add(v)
-        elif ent.type == EntityType.URL:
-            from .urls import url_host
-            h = url_host(ent.value)
-            if h:
-                self.domains.add(h)
-
-    def contains_host(self, host: str) -> bool:
-        h = host.strip().lower().rstrip(".")
-        return any(h == d or h.endswith("." + d) for d in self.domains)
-
-    def contains(self, ent: Entity) -> bool:
-        if ent.type in (EntityType.DOMAIN, EntityType.HOST):
-            return self.contains_host(ent.value)
-        if ent.type == EntityType.IP:
-            try:
-                return str(ipaddress.ip_address(ent.value.strip())) in self.ips
-            except ValueError:
-                return False
-        if ent.type in (EntityType.URL, EntityType.ACCOUNT):
-            from .urls import url_host
-            return self.contains_host(url_host(ent.value))
-        return False
-
-
-def decide(ent: Entity, module, *, mode: str, limits: Limits, scope: Scope,
+def decide(ent: Entity, module, *, mode: str, limits: Limits, scope: "Scope",
            module_runs: dict[str, int]) -> tuple[bool, str]:
     """Return (allowed, reason). Reasons are shown to the user verbatim."""
     if module_runs.get(module.name, 0) >= limits.per_module_runs:
         return False, f"{module.name} run cap ({limits.per_module_runs}) reached"
 
-    if getattr(module, "active", False) and not scope.contains(ent):
-        return False, "out of scope for active probing (not a seed asset)"
+    if getattr(module, "active", False):
+        # Active probes touch the target itself: the scope policy decides, and
+        # records, whether that target is authorized.
+        dec = scope.classify(ent)
+        if not dec.allow_active:
+            return False, f"active probe blocked ({dec.target_class}): {dec.reason}"
 
     if ent.basis == Basis.SEED.value or ent.depth == 0:
         return True, "seed entered by user"

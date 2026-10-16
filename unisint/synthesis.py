@@ -120,6 +120,18 @@ def build_dossier(snapshot: dict[str, Any]) -> dict[str, Any]:
         "in_scope_ips": sorted(scope.get("ips", [])),
     }
 
+    # Active-probe authorization audit (from the central scope policy).
+    audit = scope.get("audit", []) if isinstance(scope, dict) else []
+    scope_blocks = [a for a in audit if not a.get("allow_active")]
+    scope_report = {
+        "mode": scope.get("mode") if isinstance(scope, dict) else None,
+        "authorized_domains": sorted(scope.get("domains", [])),
+        "authorized_ips": sorted(scope.get("ips", [])),
+        "active_allowed": [a for a in audit if a.get("allow_active")],
+        "active_blocked": scope_blocks,
+        "blocked_count": len(scope_blocks),
+    }
+
     pivots = snapshot.get("pivots", [])
     skip_reasons = Counter(s["reason"] for p in pivots for s in p.get("skipped", []))
     module_status = snapshot.get("module_status", {})
@@ -154,6 +166,7 @@ def build_dossier(snapshot: dict[str, Any]) -> dict[str, Any]:
         "identifiers": identifiers,
         "names_on_profiles": names_on_profiles,
         "infrastructure": infra,
+        "scope_report": scope_report,
         "search_results": search_results,
         "provider_status": provider_status,
         "manual_links": manual_links,

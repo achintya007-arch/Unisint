@@ -183,13 +183,22 @@ class HttpFingerprint(Module):
     active = True
 
     async def run(self, ctx: Context) -> None:
-        # Active probe: only reached for in-scope assets (pivot policy), and
-        # every request goes through the SSRF-guarded client with redirects
-        # re-validated hop by hop.
+        # Active probe. The pivot policy already refused out-of-scope targets;
+        # here we re-authorize at execution time (TOCTOU) through the central
+        # scope policy, which also runs the SSRF destination guard and records
+        # the decision. Every request then goes through the SSRF-guarded client
+        # with redirects re-validated hop by hop.
+        from ..scope import ScopeDenied
         from ..urls import UnsafeTarget, safe_get
 
         host = ctx.entity.value.strip().lower().rstrip(".")
         allow_unresolved = bool(ctx.config.get("trust_proxy_resolution"))
+        try:
+            await ctx._engine.scope.authorize_active(
+                host, module=self.name, allow_unresolved=allow_unresolved)
+        except ScopeDenied as exc:
+            ctx.error(f"httpfp not authorized for {host}: {exc}")
+            return
         errors: dict[str, str] = {}
         for scheme in ("https", "http"):
             base_url = f"{scheme}://{host}/"

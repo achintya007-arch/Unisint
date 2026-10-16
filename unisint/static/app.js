@@ -257,6 +257,7 @@
     chips(root, 'IPS', inf.ips);
     chips(root, 'OUT-OF-SCOPE HOSTS (recorded only, never probed)', inf.out_of_scope_hosts);
     chips(root, 'CANDIDATE HOSTS (from search results, unverified)', inf.candidate_hosts);
+    renderScope(root, d.scope_report);
     group(root, 'SEARCH RESULTS — CANDIDATES', (d.search_results || []).map(i =>
       itemRow(i, { text: (i.meta && i.meta.title) || i.url, snippet: `${(i.meta && i.meta.snippet) || ''}  [${((i.meta && i.meta.providers) || []).join(', ')}]` })),
       'Retrieved via search APIs. A result mentions the query; it is not verified evidence.');
@@ -275,6 +276,23 @@
     group(root, 'MANUAL SEARCH LINKS (not executed)', (d.manual_links || []).flatMap(f =>
       ((f.meta && f.meta.links) || []).map(l => { const r = el('div', 'ev-row'); r.appendChild(safeLink(l.url, l.name)); return r; })));
     renderRemediation(root, d.remediation || []);
+  }
+
+  function renderScope(root, sr) {
+    if (!sr || (!sr.authorized_domains.length && !sr.authorized_ips.length && !sr.blocked_count)) return;
+    const nodes = [];
+    const auth = [...(sr.authorized_domains || []), ...(sr.authorized_ips || [])];
+    nodes.push(el('div', 'ev-row', 'Authorized for active probing: ' + (auth.join(', ') || '(none)')));
+    (sr.active_blocked || []).forEach(a => {
+      const r = el('div', 'ev-row');
+      r.appendChild(el('span', 'acc-site', a.target || '?'));
+      r.appendChild(badge('blocked: ' + a.class, 'v-bad'));
+      r.appendChild(el('span', 'note', ' ' + a.reason));
+      nodes.push(r);
+    });
+    group(root, 'ACTIVE-PROBE SCOPE' + (sr.blocked_count ? ` — ${sr.blocked_count} blocked` : ''),
+      nodes, 'Active probes (HTTP fingerprint, link checks) only run on authorized assets; '
+      + 'everything else is recorded, not touched.');
   }
 
   function renderRemediation(root, steps) {

@@ -16,7 +16,8 @@ import httpx
 from . import base, pivot
 from .base import Context, Module
 from .models import Basis, Entity, EntityType, Link
-from .pivot import Limits, Scope
+from .pivot import Limits
+from .scope import ScopePolicy
 
 EventCb = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -49,7 +50,7 @@ class Engine:
         if max_depth is not None:
             self.limits.depth = max_depth
         self.weight_cap = weight_cap
-        self.scope = Scope()
+        self.scope = ScopePolicy(mode=self.mode)
 
         self.entities: dict[tuple[str, str], Entity] = {}
         self.by_id: dict[str, Entity] = {}
@@ -165,10 +166,10 @@ class Engine:
         if parent is None and basis == Basis.SEED.value:
             ent.meta.setdefault("identity_link", "seed")
             self.scope.add_seed(ent)
-        # IPs that an in-scope host resolves to are in scope too.
-        if (etype == EntityType.IP and rel == "resolves_to" and parent
-                and self.scope.contains(parent)):
-            self.scope.ips.add(value.strip())
+        # An IP a *seeded* host resolves to is authorized for active probing;
+        # a third-party host discovered via a pivot does not drag its IP in.
+        if etype == EntityType.IP and rel == "resolves_to" and parent:
+            self.scope.authorize_resolved_ip(value, parent)
         self._emit_entity(ent)
         if parent:
             self._add_link(parent.id, ent.id, rel, source, basis)
@@ -386,8 +387,7 @@ class Engine:
             "logs": self.logs,
             "pivots": self.pivots,
             "module_status": self.module_status,
-            "scope": {"domains": sorted(self.scope.domains),
-                      "ips": sorted(self.scope.ips)},
+            "scope": self.scope.to_dict(),
             "limits": vars(self.limits),
             "mode": self.mode,
             "when": time.strftime("%Y-%m-%d %H:%M:%S"),
