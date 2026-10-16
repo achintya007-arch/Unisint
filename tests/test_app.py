@@ -111,3 +111,14 @@ def test_config_file_is_owner_only_and_logs_redacted(tmp_path, monkeypatch):
     mode = _stat.S_IMODE((tmp_path / "config.json").stat().st_mode)
     assert mode == 0o600
     assert cfgmod.redact("GET ?key=SUPERSECRETKEY failed", c) == "GET ?key=*** failed"
+
+
+def test_plan_endpoint_shapes_per_input():
+    c = TestClient(app)
+    r = c.post("/api/plan", json={"targets": ["example.com"], "mode": "recon", "preset": "deep"})
+    d = r.json()
+    assert d["mode"] == "recon" and d["targets"][0]["type"] == "domain"
+    names = {m["name"]: m for m in d["targets"][0]["modules"]}
+    assert names["httpfp"]["active"] is True
+    assert "example.com" in d["authorized"]
+    assert sum(d["counts"].values()) == len(d["targets"][0]["modules"])

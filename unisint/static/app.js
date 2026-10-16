@@ -73,10 +73,13 @@
     $('#report-gap').addEventListener('click', openGap);
     $('#gap-cancel').addEventListener('click', () => $('#gap-modal').classList.add('hidden'));
     $('#gap-save').addEventListener('click', saveGap);
+    $('#preset').addEventListener('change', previewPlan);
+    $('#plan-hide').addEventListener('click', () => $('#plan-panel').classList.add('hidden'));
     loadArsenal(false); loadConfig();
   }
   function setMode(mode) {
     MODE = mode;
+    previewPlan();
     document.querySelectorAll('.mode').forEach(x => x.classList.toggle('active', x.dataset.mode === mode));
     $('#target').placeholder = MODE === 'recon'
       ? 'domain or IP you own / are authorized to test'
@@ -110,11 +113,51 @@
 
   async function updateTypeTag() {
     const v = $('#target').value.trim();
-    if (!v) { $('#type-tag').textContent = '?'; return; }
+    if (!v) { $('#type-tag').textContent = '?'; $('#plan-panel').classList.add('hidden'); return; }
     try {
       const r = await fetch('/api/detect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: v }) });
       $('#type-tag').textContent = (await r.json()).type.toUpperCase();
     } catch { }
+    previewPlan();
+  }
+
+  /* ---------- PLAN PREVIEW ---------- */
+  const PLAN_STATUS = {
+    will_run: ['WILL RUN', 'v-ok'], needs_credentials: ['NEEDS KEY', 'v-unk'],
+    needs_authorization: ['NEEDS AUTH', 'v-unk'], unavailable: ['UNAVAILABLE', 'off'],
+    skipped_preset: ['SKIPPED (preset)', 'dimmed'],
+  };
+  const previewPlan = debounce(async () => {
+    const v = $('#target').value.trim();
+    const targets = (UPLOAD && $('#type-tag').textContent === 'IMAGE')
+      ? [{ type: 'image', value: UPLOAD.name, path: UPLOAD.path }] : (v ? [v] : []);
+    if (!targets.length) { $('#plan-panel').classList.add('hidden'); return; }
+    let p;
+    try {
+      p = await (await fetch('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targets, mode: MODE, preset: $('#preset').value }) })).json();
+    } catch { return; }
+    renderPlan(p);
+  }, 300);
+  function renderPlan(p) {
+    const body = $('#plan-body'); body.replaceChildren();
+    const c = p.counts || {};
+    $('#plan-sub').textContent = `${MODE.toUpperCase()} · ${c.will_run || 0} will run · `
+      + `${c.needs_credentials || 0} need keys · ${c.unavailable || 0} unavailable`
+      + (c.needs_authorization ? ` · ${c.needs_authorization} need authorization` : '');
+    (p.targets || []).forEach(tp => {
+      const grp = el('div', 'plan-target');
+      grp.appendChild(el('div', 'plan-ttype', `${tp.type}: ${tp.value}`));
+      tp.modules.forEach(m => {
+        const [lab, cls] = PLAN_STATUS[m.status] || [m.status, ''];
+        const row = el('div', 'plan-row');
+        row.appendChild(badge(lab, cls));
+        row.appendChild(el('span', 'plan-mod', m.label + (m.active ? ' ⚡' : '')));
+        row.appendChild(el('span', 'note', m.detail));
+        grp.appendChild(row);
+      });
+      body.appendChild(grp);
+    });
+    $('#plan-panel').classList.remove('hidden');
   }
   async function uploadImage(file) {
     log('uploading ' + file.name + ' ...', 'run');
@@ -129,6 +172,7 @@
     const v = (seedValue || $('#target').value).trim();
     if (!v && !UPLOAD) return;
     if (seedValue) $('#target').value = seedValue;
+    $('#plan-panel').classList.add('hidden');
     GRAPH.clear(); $('#dossier').replaceChildren(); $('#terminal').replaceChildren();
     SNAP = { entities: [], links: [], pivots: [] }; DOSSIER = null; FINAL = false;
     setStatus('run');

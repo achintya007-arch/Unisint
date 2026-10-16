@@ -144,6 +144,20 @@ async def detect_type(payload: dict) -> JSONResponse:
     return JSONResponse({"type": detect(val).value})
 
 
+@app.post("/api/plan")
+async def plan(payload: dict) -> JSONResponse:
+    """Preview what a run would do: which modules run / need credentials /
+    are unavailable / do active probing, for the given targets + preset."""
+    from .planner import build_plan
+    targets = payload.get("targets") or ([payload["value"]] if payload.get("value") else [])
+    mode = payload.get("mode", base.MODE_SELF)
+    if mode not in (base.MODE_SELF, base.MODE_RECON):
+        mode = base.MODE_SELF
+    preset = PRESETS.get(payload.get("preset", "standard"), PRESETS["standard"])
+    return JSONResponse(await build_plan(targets, mode, weight_cap=preset["weight_cap"],
+                                         config=config.load()))
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile) -> JSONResponse:
     dest = tmp_dir("uploads") / f"{int(time.time())}-{file.filename}"

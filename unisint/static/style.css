@@ -215,3 +215,15 @@ details.why .unk{color:#c9a54a} details.why .prov{color:var(--dim)}
 .tool .dimmed{color:var(--dim)}
 .nodeinfo .badge{margin-right:4px}
 .nodeinfo .btn{margin-top:8px}
+
+/* ---- plan preview ---- */
+.plan-panel{border:1px solid var(--mut);background:rgba(1,8,4,.75);margin:0 14px 8px;max-height:34vh;overflow:auto}
+.plan-head{display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid var(--mut);color:var(--amber);letter-spacing:2px;font-size:12px}
+.plan-head small{color:var(--dim);letter-spacing:0;text-transform:none}
+.plan-head .btn{margin-left:auto}
+.plan-body{padding:8px 12px}
+.plan-target{margin-bottom:8px}
+.plan-ttype{color:var(--cyan);font-size:12px;margin:2px 0 4px}
+.plan-row{display:flex;gap:8px;align-items:baseline;padding:2px 0;font-size:12px}
+.plan-mod{min-width:150px}
+.badge.dimmed{color:var(--dim);border-color:var(--mut)}
