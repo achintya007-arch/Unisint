@@ -36,23 +36,52 @@ class Context:
         """Report that this run FAILED (network/HTTP/parse), so the run is
         recorded as an error — not as a successful lookup with no results."""
         self.failed = msg
+        self.contacted = True
         self._engine.emit_log(msg, level="err", module=self.entity.source)
 
     failed: str | None = None
     partial_reason: str | None = None
     added: int = 0
+    # Source-run contract signals (read back by the engine):
+    contacted: bool = False       # did we actually reach out to the source?
+    live: bool = True             # false only when a fixture backed the run
+    truncated: bool = False       # results were capped
+    result_count: int | None = None   # raw results retrieved (pre-dedup)
+    explicit_status: str | None = None  # override the derived status
 
     def partial(self, msg: str) -> None:
         """Report that this run completed but upstream sources were degraded
         (some failed, were rate-limited, or their status is unknown). Results
         that were returned are still recorded."""
         self.partial_reason = msg
+        self.contacted = True
         self._engine.emit_log(msg, level="warn", module=self.entity.source)
+
+    def mark_contacted(self, *, live: bool = True) -> None:
+        """A request/tool invocation actually went out."""
+        self.contacted = True
+        self.live = self.live and live
+
+    def mark_truncated(self, retrieved: int, kept: int) -> None:
+        """Results were capped: ``retrieved`` available, ``kept`` recorded."""
+        if retrieved > kept:
+            self.truncated = True
+        self.result_count = retrieved
+
+    def status(self, code: str, detail: str = "") -> None:
+        """Set an explicit source-run status from the vocabulary
+        (blocked/rate_limited/auth_error/not_configured/timeout/skipped/…)."""
+        self.explicit_status = code
+        self.contacted = True
+        if detail:
+            self._engine.emit_log(f"{self.entity.source}: {code} — {detail}",
+                                  level="warn", module=self.entity.source)
 
     def check_http(self, resp, service: str) -> bool:
         """True for 200. 404 = an honest 'not found' (empty run); 429 and any
         other status = a failed lookup, recorded as an error."""
         code = resp.status_code
+        self.contacted = True        # we reached the service, whatever it said
         if code == 200:
             return True
         reason = ""

@@ -158,6 +158,54 @@ async def plan(payload: dict) -> JSONResponse:
                                          config=config.load()))
 
 
+@app.post("/api/rerun-source")
+async def rerun_source(payload: dict) -> JSONResponse:
+    """Re-run ONE module against the original seed targets (depth 0) and return
+    the entities it produced plus its source-run status. The UI merges these
+    into the live snapshot and re-renders via /api/dossier — no full re-scan."""
+    name = str(payload.get("module", "")).strip()
+    mod = next((m for m in base.all_modules() if m.name == name), None)
+    if not mod:
+        return JSONResponse({"error": f"unknown module: {name}"}, status_code=400)
+    mode = payload.get("mode", base.MODE_SELF)
+    if mode not in (base.MODE_SELF, base.MODE_RECON):
+        mode = base.MODE_SELF
+    targets = payload.get("targets") or ([payload["value"]] if payload.get("value") else [])
+    if not targets:
+        return JSONResponse({"error": "no targets"}, status_code=400)
+
+    events: list[dict] = []
+
+    async def emit(p: dict) -> None:
+        events.append(p)
+
+    # Let the one module run regardless of the preset's depth tier; cap the
+    # run to its seeds (depth 0) so a retry never fans out into a new scan.
+    engine = Engine(mode=mode, config=config.load(), emit=emit,
+                    weight_cap=max(mod.weight, 1),
+                    limits=Limits(depth=0, time_budget=120),
+                    only_modules={name})
+    for t in targets:
+        if isinstance(t, dict):
+            try:
+                etype = EntityType(t["type"])
+            except (KeyError, ValueError):
+                continue
+            engine.add_entity(etype, t["value"], source="input",
+                              meta={"path": t.get("path")} if t.get("path") else {})
+        else:
+            engine.add_entity(detect(t), t, source="input")
+    await engine.run()
+
+    snap = engine.snapshot()
+    produced = [e for e in snap["entities"] if e.get("source") != "input"]
+    status = engine.module_status.get(
+        name, {"state": "skipped", "label": mod.label, "category": mod.category,
+               "active": bool(mod.active),
+               "last_error": "module did not accept any of the given targets"})
+    return JSONResponse({"module": name, "status": status, "entities": produced})
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile) -> JSONResponse:
     dest = tmp_dir("uploads") / f"{int(time.time())}-{file.filename}"

@@ -122,3 +122,23 @@ def test_plan_endpoint_shapes_per_input():
     assert names["httpfp"]["active"] is True
     assert "example.com" in d["authorized"]
     assert sum(d["counts"].values()) == len(d["targets"][0]["modules"])
+
+
+def test_rerun_source_unknown_module():
+    r = client.post("/api/rerun-source", json={"module": "nope", "targets": ["+14155552671"]})
+    assert r.status_code == 400 and "unknown module" in r.json()["error"]
+
+
+def test_rerun_source_runs_one_offline_module():
+    # phone_info is pure-offline: a re-run against the original seed must
+    # produce its findings and a well-formed source-run status, nothing else.
+    r = client.post("/api/rerun-source",
+                    json={"module": "phone_info", "mode": "self",
+                          "targets": ["+14155552671"]})
+    d = r.json()
+    assert d["module"] == "phone_info"
+    assert d["status"]["state"] in ("ok", "empty")
+    assert d["status"]["findings"] >= 1          # offline parser still finds
+    # Only the one module's entities come back; seeds are excluded.
+    assert all(e["source"] != "input" for e in d["entities"])
+    assert any(e["source"] == "phone_info" for e in d["entities"])

@@ -214,6 +214,7 @@ class Subfinder(Module):
         if code != 0 and not rows:
             raise RuntimeError(f"subfinder exit {code}: {(se or so).strip()[-160:]}")
         ctx.log(f"subfinder: {len(rows)} subdomains")
+        ctx.mark_contacted(); ctx.mark_truncated(len(rows), 150)
         for r in rows[:150]:
             ctx.add_entity(EntityType.HOST, r["host"], source=self.name,
                            rel="subdomain",
@@ -241,6 +242,7 @@ class Amass(Module):
         if code != 0 and not hosts:
             raise RuntimeError(f"amass exit {code}: {(se or so).strip()[-160:]}")
         ctx.log(f"amass: {len(hosts)} names")
+        ctx.mark_contacted(); ctx.mark_truncated(len(hosts), 150)
         for h in hosts[:150]:
             if h != dom:
                 ctx.add_entity(EntityType.HOST, h, source=self.name, rel="subdomain")
@@ -279,6 +281,7 @@ class TheHarvester(Module):
             res = parse_harvester_json(json.loads(jpath.read_text()), dom)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"theHarvester JSON unparseable: {exc}") from exc
+        ctx.mark_contacted(); ctx.mark_truncated(len(res["hosts"]), 150)
         for e in res["emails"]:
             ctx.add_entity(EntityType.EMAIL, e, source=self.name, rel="harvested",
                            meta={"from_sources": self.SOURCES})

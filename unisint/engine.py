@@ -28,6 +28,22 @@ USER_AGENT = "UNISINT/2.0 (+public-source research)"
 BASIS_WEIGHT = {"seed": 1.0, "observed": 0.6, "derived": 0.4, "candidate": 0.25}
 BASIS_RANK = {"candidate": 0, "derived": 1, "observed": 2, "seed": 3}
 
+# The full source-run status vocabulary surfaced to the UI/dossier.
+SOURCE_STATES = ("ok", "empty", "partial", "error", "blocked", "rate_limited",
+                 "auth_error", "unavailable", "not_configured", "timeout",
+                 "skipped")
+_EXPLICIT_STATES = {"blocked", "rate_limited", "auth_error", "not_configured",
+                    "timeout", "skipped"}
+
+
+def _refine_status(derived: str, explicit: str | None, st: dict) -> str:
+    """Pick the source-run status. An explicit status a module set wins over
+    the derived ok/empty/partial/error — unless some run of the module produced
+    findings (then it genuinely succeeded)."""
+    if explicit in _EXPLICIT_STATES and not st.get("ok"):
+        return explicit
+    return derived
+
 
 class Engine:
     def __init__(
@@ -42,6 +58,7 @@ class Engine:
         max_depth: int | None = None,      # back-compat
         http: httpx.AsyncClient | None = None,
         safe_http: httpx.AsyncClient | None = None,
+        only_modules: set[str] | None = None,
     ):
         self.mode = mode
         self.config = config
@@ -50,6 +67,10 @@ class Engine:
         if max_depth is not None:
             self.limits.depth = max_depth
         self.weight_cap = weight_cap
+        # When set, only these module names may run (used by single-source
+        # re-run, so one failed/partial source can be retried without a
+        # full re-scan). None = every module that accepts the entity.
+        self.only_modules = only_modules
         self.scope = ScopePolicy(mode=self.mode)
 
         self.entities: dict[tuple[str, str], Entity] = {}
@@ -269,7 +290,8 @@ class Engine:
 
     async def _dispatch(self, ent: Entity) -> None:
         mods = [m for m in base.modules_for(ent.type, self.mode)
-                if m.weight <= self.weight_cap]
+                if m.weight <= self.weight_cap
+                and (self.only_modules is None or m.name in self.only_modules)]
         if not mods:
             return
         run, skipped = [], []
@@ -299,7 +321,13 @@ class Engine:
 
         ok, why = await mod.available(self)
         if not ok:
-            self.module_status[mod.name] = {"state": "unavailable", "last_error": why}
+            needs_creds = any(w in why.lower() for w in (
+                "api key", "provider", "configured", "cx", "credential", "searxng"))
+            self.module_status[mod.name] = {
+                "state": "not_configured" if needs_creds else "unavailable",
+                "last_error": why, "label": mod.label, "category": mod.category,
+                "active": bool(mod.active), "contacted": False, "live": True,
+                "findings": 0, "runs": 0, "target_type": ent.type.value}
             self.emit_log(f"[{mod.label}] skip ({why})", level="warn",
                           module=mod.name)
             return
@@ -317,10 +345,16 @@ class Engine:
             started = time.time()
             st = self.module_status.setdefault(
                 mod.name, {"runs": 0, "ok": 0, "empty": 0, "partial": 0,
-                           "errors": 0, "last_error": ""})
+                           "errors": 0, "last_error": "", "label": mod.label,
+                           "category": mod.category, "active": bool(mod.active),
+                           "contacted": False, "live": True, "truncated": False,
+                           "findings": 0, "results_retrieved": 0})
             st["runs"] += 1
+            st["target_type"] = ent.type.value
+            explicit = None
             try:
                 await mod.run(ctx)
+                explicit = ctx.explicit_status
                 if ctx.failed:
                     st["errors"] += 1
                     st["last_error"] = ctx.failed[:200]
@@ -338,10 +372,20 @@ class Engine:
                               module=mod.name)
             finally:
                 st["last_ms"] = int((time.time() - started) * 1000)
+                st["findings"] += ctx.added
+                st["contacted"] = st["contacted"] or ctx.contacted
+                st["live"] = st["live"] and ctx.live
+                st["truncated"] = st["truncated"] or ctx.truncated
+                if ctx.result_count is not None:
+                    st["results_retrieved"] += ctx.result_count
                 good = st["ok"] or st["empty"] or st["partial"]
-                st["state"] = ("error" if st["errors"] and not good
-                               else "partial" if st["errors"] or st["partial"]
-                               else "ok" if st["ok"] else "empty")
+                derived = ("error" if st["errors"] and not good
+                           else "partial" if st["errors"] or st["partial"]
+                           else "ok" if st["ok"] else "empty")
+                # An explicit status from the module (blocked/rate_limited/
+                # auth_error/not_configured/timeout) wins unless a later run
+                # of the same module produced results.
+                st["state"] = _refine_status(derived, explicit, st)
 
     # ---- link validation (opt-in) ---------------------------------------
     async def validate_links(self) -> None:

@@ -53,6 +53,17 @@ class WebSearch(Module):
                                   "status": oc.status, "detail": oc.detail,
                                   "query": oc.query})
         n_ok = sum(1 for o in outcomes if o.status in ("ok", "empty"))
+        raw = sum(len(o.results) for o in outcomes)
+        # Contacted if any provider actually ran; live unless fixture-backed.
+        if any(o.status != "unconfigured" for o in outcomes):
+            ctx.mark_contacted(live=not any(p.name == "fixture" for p in providers))
+        ctx.result_count = raw
+        ctx.mark_truncated(len(results), 30)
+        # If every provider failed (none ok/empty), surface the worst status.
+        if outcomes and n_ok == 0:
+            worst = outcomes[0].status
+            ctx.status(worst if worst in ("rate_limited", "auth_error", "timeout")
+                       else "error", f"all {len(outcomes)} provider call(s) failed")
         ctx.log(f"web_search: {len(queries)} queries × {len(providers)} provider(s) "
                 f"→ {n_ok}/{len(outcomes)} succeeded, {len(results)} unique results")
 

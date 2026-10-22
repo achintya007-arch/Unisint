@@ -134,6 +134,7 @@ class CrtSh(Module):
                 if name.endswith(dom) and name != dom:
                     subs.add(name)
         ctx.log(f"crt.sh: {len(subs)} unique subdomains")
+        ctx.mark_contacted(); ctx.mark_truncated(len(subs), 50)
         for s in sorted(subs)[:50]:
             ctx.add_entity(EntityType.HOST, s, source=self.name,
                            rel="subdomain")

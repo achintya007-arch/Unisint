@@ -8,7 +8,7 @@
 
   let MODE = 'self', GRAPH = null, DOSSIER = null;
   let SNAP = { entities: [], links: [], pivots: [] };
-  let ws = null, UPLOAD = null, FINAL = false;
+  let ws = null, UPLOAD = null, FINAL = false, TARGETS = [];
 
   function safeHref(u) {
     if (typeof u !== 'string') return null;
@@ -179,6 +179,7 @@
     $('#engage').classList.add('hidden'); $('#cancel').classList.remove('hidden');
     const targets = (UPLOAD && $('#type-tag').textContent === 'IMAGE')
       ? [{ type: 'image', value: UPLOAD.name, path: UPLOAD.path }] : [v];
+    TARGETS = targets;   // remembered so a single source can be re-run
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen = () => ws.send(JSON.stringify({
@@ -275,6 +276,78 @@
     group(root, title, arr.map(v => el('span', 'chip', v)), note);
   }
 
+  // Source-run status → badge style, and which states are worth re-running.
+  const SRC_CLASS = {
+    ok: 'v-ok', empty: 'dimmed', skipped: 'dimmed',
+    not_configured: 'dimmed', unavailable: 'dimmed',
+    partial: 'v-unk', rate_limited: 'v-unk', timeout: 'v-unk',
+    error: 'v-bad', blocked: 'v-bad', auth_error: 'v-bad',
+  };
+  const RETRYABLE = new Set(['error', 'partial', 'rate_limited', 'timeout',
+    'blocked', 'auth_error']);
+  function sourceRow(name, v) {
+    const r = el('div', 'ev-row');
+    const head = el('div', 'ev-head');
+    head.appendChild(el('span', 'acc-site', (v.label || name) + (v.active ? ' ⚡' : '')));
+    head.appendChild(badge(v.state || '?', SRC_CLASS[v.state] || 'v-unk', v.last_error || ''));
+    // Honest run facts: only shown when the source actually reached out.
+    const facts = [];
+    if (v.contacted) facts.push(v.live === false ? 'fixture-backed' : 'contacted');
+    if (v.findings) facts.push(`${v.findings} finding${v.findings === 1 ? '' : 's'}`);
+    if (v.results_retrieved) facts.push(`${v.results_retrieved} retrieved`);
+    if (v.truncated) facts.push('truncated');
+    if (facts.length) head.appendChild(el('span', 'srcfacts', facts.join(' · ')));
+    if (TARGETS.length && (RETRYABLE.has(v.state) || v.contacted === false && v.state === 'empty')) {
+      const b = el('button', 'retry', 'RETRY');
+      b.title = 'Re-run just this source against the original target(s)';
+      b.onclick = () => rerunSource(name, b);
+      head.appendChild(b);
+    }
+    r.appendChild(head);
+    if (v.last_error) r.appendChild(el('div', 'note', v.last_error));
+    return r;
+  }
+  async function rerunSource(name, btn) {
+    if (!TARGETS.length) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'RUNNING…'; }
+    log(`re-running source: ${name}`, 'run');
+    let res;
+    try {
+      res = await (await fetch('/api/rerun-source', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ module: name, mode: MODE, targets: TARGETS })
+      })).json();
+    } catch { log(`retry failed: ${name}`, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'RETRY'; } return; }
+    if (res.error) { log(`retry: ${res.error}`, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'RETRY'; } return; }
+    // Replace this source's status and fold its fresh entities into the snapshot.
+    DOSSIER = DOSSIER || {}; DOSSIER.module_status = DOSSIER.module_status || {};
+    DOSSIER.module_status[name] = res.status;
+    (res.entities || []).forEach(e => { GRAPH.addNode(e); mergeEntity(e); });
+    const st = res.status.state;
+    log(`${name}: ${st} — ${res.entities.length} entities`, st === 'ok' ? 'ok' : 'warn');
+    await rebuildDossier();
+  }
+  // Merge by identity (type + normalised value), replacing any stale copy so a
+  // re-run never duplicates rows.
+  function mergeEntity(e) {
+    const k = e.type + ':' + String(e.value).trim().toLowerCase();
+    const i = SNAP.entities.findIndex(x => x.type + ':' + String(x.value).trim().toLowerCase() === k);
+    if (i >= 0) SNAP.entities[i] = e; else SNAP.entities.push(e);
+  }
+  // Rebuild the dossier server-side, preserving the current per-source statuses
+  // (the dossier builder keeps whatever module_status we pass it).
+  async function rebuildDossier() {
+    try {
+      const r = await fetch('/api/dossier', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: MODE, entities: SNAP.entities, pivots: SNAP.pivots,
+          scope: (DOSSIER && DOSSIER.scope) || undefined,
+          module_status: (DOSSIER && DOSSIER.module_status) || {} })
+      });
+      DOSSIER = await r.json(); renderDossier();
+    } catch { }
+  }
+
   function renderDossier() {
     const d = DOSSIER; if (!d) return;
     const c = d.counts || {};
@@ -307,12 +380,8 @@
       'Retrieved via search APIs. A result mentions the query; it is not verified evidence.');
     group(root, 'FINDINGS', (d.findings || []).map(f => el('div', 'ev-row', `[${(f.provenance.sources || ['?'])[0]}] ${f.value}`)));
     group(root, 'SEARCH PROVIDER STATUS', (d.provider_status || []).map(f => el('div', 'ev-row l-warn', `${f.value} — ${(f.meta && f.meta.detail) || ''}`)));
-    group(root, 'MODULE STATUS', Object.entries(d.module_status || {}).sort().map(([k, v]) => {
-      const r = el('div', 'ev-row'); r.appendChild(el('span', 'acc-site', k));
-      r.appendChild(badge(v.state || '?', v.state === 'ok' ? 'v-ok' : (v.state === 'error' ? 'v-bad' : 'v-unk')));
-      if (v.last_error) r.appendChild(el('span', 'note', ' ' + v.last_error));
-      return r;
-    }));
+    group(root, 'MODULE STATUS', Object.entries(d.module_status || {}).sort()
+      .map(([k, v]) => sourceRow(k, v)));
     const ps = d.pivot_summary || {};
     if (ps.expanded != null) group(root, 'PIVOTS', [
       el('div', 'ev-row', `expanded ${ps.expanded} · not expanded ${ps.not_expanded}`),

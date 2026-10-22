@@ -195,6 +195,11 @@ small{color:var(--dim)}
 .nolink{color:#888;word-break:break-all}
 .snippet{color:var(--dim);font-size:11.5px;margin:3px 0 0}
 .badge{font-size:10px;letter-spacing:.5px;padding:1px 6px;border:1px solid var(--mut)}
+.srcfacts{color:var(--dim);font-size:11px}
+.retry{margin-left:auto;background:transparent;color:var(--amber);border:1px solid #5a4500;
+  font:inherit;font-size:10px;letter-spacing:.5px;padding:1px 8px;cursor:pointer}
+.retry:hover:not(:disabled){color:#000;background:var(--amber)}
+.retry:disabled{color:var(--dim);border-color:var(--mut);cursor:default}
 .v-ok{color:var(--cyan);border-color:var(--cyan)}
 .v-bad{color:var(--red);border-color:var(--red)}
 .v-unk{color:var(--amber);border-color:#5a4500}
