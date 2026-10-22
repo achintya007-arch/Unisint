@@ -9,6 +9,9 @@
   let MODE = 'self', GRAPH = null, DOSSIER = null;
   let SNAP = { entities: [], links: [], pivots: [] };
   let ws = null, UPLOAD = null, FINAL = false, TARGETS = [];
+  // Client-side view filter (dossier rows + graph nodes). Each dimension is a
+  // Set of allowed values, or absent for "no constraint".
+  const FILTER = { type: null, source: null, vstate: null, basis: null };
 
   function safeHref(u) {
     if (typeof u !== 'string') return null;
@@ -249,6 +252,7 @@
   }
   function itemRow(it, opts = {}) {
     const row = el('div', 'ev-row');
+    tagFilter(row, it);
     const head = el('div', 'ev-head');
     if (it.site) head.appendChild(el('span', 'acc-site', it.site));
     if (it.url) head.appendChild(safeLink(it.url, opts.text || it.url,
@@ -274,6 +278,114 @@
   function chips(root, title, arr, note) {
     if (!arr || !arr.length) return;
     group(root, title, arr.map(v => el('span', 'chip', v)), note);
+  }
+
+  /* ---------- VIEW FILTER (dossier rows + graph nodes) ---------- */
+  const BASIS_LABEL = { seed: 'seeded', observed: 'observed', derived: 'derived', candidate: 'candidate' };
+  // Pull the filterable facets off an entity dict OR a built dossier item.
+  function fsources(e) {
+    if (e.meta && Array.isArray(e.meta.sources)) return e.meta.sources;
+    if (e.provenance && Array.isArray(e.provenance.sources)) return e.provenance.sources; // dossier item
+    if (Array.isArray(e.provenance)) return e.provenance.map(p => p.source).filter(Boolean); // raw entity
+    return e.source ? [e.source] : [];
+  }
+  function facets(e) {
+    return {
+      type: e.type,
+      basis: e.basis || 'observed',
+      vstate: (e.validation && e.validation.state) || 'unchecked',
+      sources: fsources(e),
+    };
+  }
+  function matchFilter(e) {
+    const f = facets(e);
+    if (FILTER.type && !FILTER.type.has(f.type)) return false;
+    if (FILTER.basis && !FILTER.basis.has(f.basis)) return false;
+    if (FILTER.vstate && !FILTER.vstate.has(f.vstate)) return false;
+    if (FILTER.source && !f.sources.some(s => FILTER.source.has(s))) return false;
+    return true;
+  }
+  function tagFilter(row, it) {
+    const f = facets(it);
+    row.dataset.f = '1';
+    row.dataset.ftype = f.type;
+    row.dataset.fbasis = f.basis;
+    row.dataset.fvstate = f.vstate;
+    row.dataset.fsrc = f.sources.join(',');
+  }
+  function rowMatches(row) {
+    if (FILTER.type && !FILTER.type.has(row.dataset.ftype)) return false;
+    if (FILTER.basis && !FILTER.basis.has(row.dataset.fbasis)) return false;
+    if (FILTER.vstate && !FILTER.vstate.has(row.dataset.fvstate)) return false;
+    if (FILTER.source) {
+      const srcs = (row.dataset.fsrc || '').split(',').filter(Boolean);
+      if (!srcs.some(s => FILTER.source.has(s))) return false;
+    }
+    return true;
+  }
+  const FILTER_DIMS = [
+    ['type', 'TYPE', e => [e.type]],
+    ['source', 'SOURCE', e => fsources(e)],
+    ['vstate', 'VALIDATION', e => [(e.validation && e.validation.state) || 'unchecked']],
+    ['basis', 'EVIDENCE', e => [e.basis || 'observed'], v => BASIS_LABEL[v] || v],
+  ];
+  function buildFilterBar() {
+    const bar = $('#dossier-filter'); if (!bar) return;
+    bar.replaceChildren();
+    const ents = SNAP.entities || [];
+    if (!ents.length) { bar.classList.add('hidden'); return; }
+    let any = false;
+    FILTER_DIMS.forEach(([key, title, get, lbl]) => {
+      const present = new Set();
+      ents.forEach(e => get(e).forEach(v => { if (v) present.add(v); }));
+      if (present.size < 2) return;              // nothing to choose between
+      any = true;
+      const grp = el('div', 'dfilter-grp');
+      grp.appendChild(el('span', 'dfilter-lbl', title));
+      [...present].sort().forEach(v => {
+        const on = FILTER[key] && FILTER[key].has(v);
+        const chip = el('span', 'fchip' + (on ? ' on' : ''), (lbl ? lbl(v) : v));
+        chip.onclick = () => {
+          FILTER[key] = FILTER[key] || new Set();
+          if (FILTER[key].has(v)) FILTER[key].delete(v); else FILTER[key].add(v);
+          if (!FILTER[key].size) FILTER[key] = null;
+          buildFilterBar(); applyFilter();
+        };
+        grp.appendChild(chip);
+      });
+      bar.appendChild(grp);
+    });
+    if (FILTER.type || FILTER.source || FILTER.vstate || FILTER.basis) {
+      const clr = el('span', 'fchip clear', '✕ CLEAR');
+      clr.onclick = () => { FILTER.type = FILTER.source = FILTER.vstate = FILTER.basis = null; buildFilterBar(); applyFilter(); };
+      bar.appendChild(clr);
+    }
+    bar.classList.toggle('hidden', !any);
+  }
+  // Hide dossier rows that don't match; recount group headers; sync the graph.
+  function applyFilter() {
+    const active = !!(FILTER.type || FILTER.source || FILTER.vstate || FILTER.basis);
+    $('#dossier').querySelectorAll('.dgroup').forEach(g => {
+      const rows = [...g.querySelectorAll('.ev-row[data-f]')];
+      if (!rows.length) return;                  // summary group (chips/findings): leave as is
+      let shown = 0;
+      rows.forEach(r => { const ok = rowMatches(r); r.classList.toggle('fhide', !ok); if (ok) shown++; });
+      const h4 = g.querySelector('h4');
+      if (h4 && !h4.dataset.base) h4.dataset.base = h4.textContent;
+      if (h4) h4.textContent = active ? `${h4.dataset.base} · ${shown} shown` : h4.dataset.base;
+      g.classList.toggle('fhide', active && shown === 0);
+    });
+    if (GRAPH) GRAPH.setFilter(active ? matchFilter : null);
+  }
+  function renderLegend() {
+    const box = $('#graph-legend'); if (!box || box.childElementCount) return;
+    const add = (swatch, text) => { const r = el('div', 'leg-row'); r.appendChild(swatch); r.appendChild(el('span', null, text)); box.appendChild(r); };
+    const dot = (cls) => el('span', 'leg-dot ' + cls);
+    add(dot('solid'), 'observed / seeded (solid)');
+    add(dot('hollow'), 'candidate / derived — unconfirmed (hollow)');
+    add(dot('broken'), 'broken / unsafe link (red ring)');
+    box.appendChild(el('div', 'leg-sep'));
+    box.appendChild(el('div', 'note', 'dashed edge = unconfirmed link'));
   }
 
   // Source-run status → badge style, and which states are worth re-running.
@@ -363,8 +475,10 @@
       group(root, 'ACCOUNTS — ' + (items[0].assessment.title || label).toUpperCase(), items.map(i => itemRow(i)),
         label === 'handle_match' ? 'Same handle on another site. That alone is not proof it is the same person.' : null));
     group(root, 'LINKS LISTED ON PROFILES', (d.linked_urls || []).map(i => itemRow(i)));
-    group(root, 'REGISTRATIONS', (d.registrations || []).map(r => el('div', 'ev-row', `${r.value}  [${(r.provenance.sources || []).join(', ')}]`)),
-      'The tool reports the email/phone is registered on this site. No profile URL is known, so none is shown.');
+    group(root, 'REGISTRATIONS', (d.registrations || []).map(reg => {
+      const r = el('div', 'ev-row', `${reg.value}  [${(reg.provenance.sources || []).join(', ')}]`);
+      tagFilter(r, reg); return r;
+    }), 'The tool reports the email/phone is registered on this site. No profile URL is known, so none is shown.');
     Object.entries(d.identifiers || {}).forEach(([t, items]) =>
       group(root, t.toUpperCase() + 'S FOUND', items.map(i => itemRow(i))));
     group(root, 'NAMES SHOWN ON PROFILES', (d.names_on_profiles || []).map(n => el('div', 'ev-row', `${n.name} — on ${n.on}`)),
@@ -378,7 +492,10 @@
     group(root, 'SEARCH RESULTS — CANDIDATES', (d.search_results || []).map(i =>
       itemRow(i, { text: (i.meta && i.meta.title) || i.url, snippet: `${(i.meta && i.meta.snippet) || ''}  [${((i.meta && i.meta.providers) || []).join(', ')}]` })),
       'Retrieved via search APIs. A result mentions the query; it is not verified evidence.');
-    group(root, 'FINDINGS', (d.findings || []).map(f => el('div', 'ev-row', `[${(f.provenance.sources || ['?'])[0]}] ${f.value}`)));
+    group(root, 'FINDINGS', (d.findings || []).map(f => {
+      const r = el('div', 'ev-row', `[${(f.provenance.sources || ['?'])[0]}] ${f.value}`);
+      tagFilter(r, f); return r;
+    }));
     group(root, 'SEARCH PROVIDER STATUS', (d.provider_status || []).map(f => el('div', 'ev-row l-warn', `${f.value} — ${(f.meta && f.meta.detail) || ''}`)));
     group(root, 'MODULE STATUS', Object.entries(d.module_status || {}).sort()
       .map(([k, v]) => sourceRow(k, v)));
@@ -389,6 +506,25 @@
     group(root, 'MANUAL SEARCH LINKS (not executed)', (d.manual_links || []).flatMap(f =>
       ((f.meta && f.meta.links) || []).map(l => { const r = el('div', 'ev-row'); r.appendChild(safeLink(l.url, l.name)); return r; })));
     renderRemediation(root, d.remediation || []);
+    if (!root.childElementCount) emptyState(root, d);
+    renderLegend();
+    buildFilterBar();
+    applyFilter();
+  }
+  // Explain an empty dossier in terms of what the sources actually did.
+  function emptyState(root, d) {
+    const ms = Object.values(d.module_status || {});
+    const failed = ms.filter(v => ['error', 'blocked', 'rate_limited', 'auth_error', 'timeout', 'partial'].includes(v.state)).length;
+    const needKeys = ms.filter(v => v.state === 'not_configured').length;
+    const g = el('div', 'dgroup empty-state');
+    g.appendChild(el('h4', null, FINAL ? 'NO RESULTS' : 'NO RESULTS YET'));
+    let msg = FINAL ? 'Nothing was recorded for this target.' : 'Scanning…';
+    const bits = [];
+    if (failed) bits.push(`${failed} source${failed === 1 ? '' : 's'} failed`);
+    if (needKeys) bits.push(`${needKeys} need credentials`);
+    if (bits.length) msg += ' ' + bits.join(', ') + ' — see the PLAN panel and MODULE STATUS.';
+    g.appendChild(el('div', 'note', msg));
+    root.appendChild(g);
   }
 
   function renderScope(root, sr) {

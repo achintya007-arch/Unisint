@@ -13,8 +13,11 @@
       this.nodes = new Map(); this.links = [];
       this.hover = null; this.selected = null;
       this.onSelect = null;
+      this.filter = null;          // optional predicate(data) -> boolean
       this._bind(); this._resize(); this._loop();
     }
+    setFilter(fn) { this.filter = fn || null; }
+    _shown(n) { return !this.filter || this.filter(n.data); }
     _resize() {
       const r = this.cv.getBoundingClientRect();
       this.cv.width = r.width; this.cv.height = r.height;
@@ -48,6 +51,7 @@
       const r = this.cv.getBoundingClientRect();
       const mx = ev.clientX - r.left, my = ev.clientY - r.top;
       for (const n of this.nodes.values()) {
+        if (!this._shown(n)) continue;          // filtered-out nodes aren't pickable
         const rr = this._radius(n);
         if ((mx - n.x) ** 2 + (my - n.y) ** 2 < (rr + 4) ** 2) return n;
       }
@@ -96,7 +100,8 @@
       for (const l of this.links) {
         const a = this.nodes.get(l.src), b = this.nodes.get(l.dst);
         if (!a || !b) continue;
-        ctx.strokeStyle = 'rgba(28,138,62,0.5)';
+        const dim = !this._shown(a) || !this._shown(b);
+        ctx.strokeStyle = dim ? 'rgba(28,138,62,0.1)' : 'rgba(28,138,62,0.5)';
         ctx.setLineDash(l.basis === 'candidate' ? [3, 4] : []);   // dashed = unconfirmed
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
@@ -107,6 +112,13 @@
         const c = COLORS[n.data.type] || '#33ff66';
         const r = this._radius(n);
         const age = now - n.born;
+        if (!this._shown(n)) {
+          // Filtered out: faint dot, no glow/label — still placed so the layout
+          // doesn't jump when the filter changes.
+          ctx.globalAlpha = 0.12; ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7);
+          ctx.fillStyle = c; ctx.fill(); ctx.globalAlpha = 1;
+          continue;
+        }
         if (age < 900) {
           ctx.beginPath();
           ctx.arc(n.x, n.y, r + (1 - age / 900) * 18, 0, 7);

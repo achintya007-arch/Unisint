@@ -200,6 +200,26 @@ small{color:var(--dim)}
   font:inherit;font-size:10px;letter-spacing:.5px;padding:1px 8px;cursor:pointer}
 .retry:hover:not(:disabled){color:#000;background:var(--amber)}
 .retry:disabled{color:var(--dim);border-color:var(--mut);cursor:default}
+/* view filter + legend + empty state */
+.dfilter{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:6px 8px;
+  border:1px solid var(--mut);margin-bottom:8px;background:rgba(20,40,26,.25)}
+.dfilter-grp{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.dfilter-lbl{color:var(--dim);font-size:10px;letter-spacing:.5px;margin-right:2px}
+.fchip{font-size:10px;letter-spacing:.3px;padding:1px 7px;border:1px solid var(--mut);
+  color:var(--dim);cursor:pointer;user-select:none}
+.fchip:hover{color:var(--fg)}
+.fchip.on{color:#000;background:var(--cyan);border-color:var(--cyan)}
+.fchip.clear{color:var(--amber);border-color:#5a4500}
+.fhide{display:none !important}
+.empty-state .note{font-size:12.5px;color:var(--amber)}
+.legend{position:absolute;right:10px;bottom:10px;background:rgba(6,16,10,.82);
+  border:1px solid var(--mut);padding:7px 9px;font-size:10.5px;color:var(--dim);pointer-events:none}
+.leg-row{display:flex;align-items:center;gap:6px;margin:2px 0}
+.leg-dot{width:11px;height:11px;border-radius:50%;display:inline-block}
+.leg-dot.solid{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+.leg-dot.hollow{border:1.5px solid var(--cyan);opacity:.6}
+.leg-dot.broken{border:2px solid var(--red)}
+.leg-sep{height:1px;background:var(--mut);margin:4px 0}
 .v-ok{color:var(--cyan);border-color:var(--cyan)}
 .v-bad{color:var(--red);border-color:var(--red)}
 .v-unk{color:var(--amber);border-color:#5a4500}
