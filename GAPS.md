@@ -11,8 +11,6 @@ to `~/.unisint/gaps.md`).
       (data is collected, not yet charted).
 - [ ] **AI analyst** — use the stored Anthropic key to summarise a dossier and
       suggest next pivots.
-- [ ] **Key-gated adapters** — Shodan (full), HIBP (breach names), Hunter,
-      VirusTotal: keys can be stored but no module reads them yet.
 - [ ] **More tools** — WhatsMyName, Blackbird, PhoneInfoga, Mastodon,
       PGP keyservers.
 - [ ] **Live web search unverified with real credentials.** Only the error
@@ -29,6 +27,16 @@ to `~/.unisint/gaps.md`).
 - [ ] **Reverse image search** — currently links only (manual upload).
 
 ## Shipped (v3.0)
+- **Key-gated enrichment APIs now real** (`native/enrich.py`): the stored
+  Shodan / HIBP / Hunter.io / VirusTotal keys were dead settings — no module
+  read them. They now power real modules: Shodan host API (ports/services/
+  vulns/org for an IP), Have I Been Pwned (breach *names* + metadata for an
+  email — never passwords), Hunter.io (public emails for a domain), VirusTotal
+  (reputation + passive DNS for a domain/IP). Each is key-gated (shown as
+  "needs API key" in ARSENAL/PLAN until set), honest about auth_error /
+  rate_limited / empty, and keys can come from the environment
+  (`UNISINT_SHODAN_API_KEY`, `UNISINT_HIBP_API_KEY`, `UNISINT_HUNTER_API_KEY`,
+  `UNISINT_VIRUSTOTAL_API_KEY`) and are never written to disk.
 - **Central scope policy** (`scope.py`): one engine classifies every target
   (seed / in-scope / discovered / unresolved / unsafe), re-authorizes each
   active probe at connect time (DNS-rebinding / TOCTOU defence) over the SSRF

@@ -42,7 +42,11 @@ SETTABLE = ("effects", "max_concurrency", "searxng_url", "trust_proxy_resolution
 # NEVER persisted by save().
 ENV_KEYS = {"brave": "UNISINT_BRAVE_API_KEY",
             "google_cse_key": "UNISINT_GOOGLE_CSE_KEY",
-            "google_cse_cx": "UNISINT_GOOGLE_CSE_CX"}
+            "google_cse_cx": "UNISINT_GOOGLE_CSE_CX",
+            "shodan": "UNISINT_SHODAN_API_KEY",
+            "hibp": "UNISINT_HIBP_API_KEY",
+            "hunter": "UNISINT_HUNTER_API_KEY",
+            "virustotal": "UNISINT_VIRUSTOTAL_API_KEY"}
 ENV_SETTINGS = {"searxng_url": "UNISINT_SEARXNG_URL"}
 
 

@@ -190,6 +190,24 @@ the old dork links are offered as clearly-labelled *manual search links*.
 Query templates can be overridden with `~/.unisint/search_queries.json`.
 Keys live in `~/.unisint/config.json` (mode 0600) and are redacted from logs.
 
+## Enrichment APIs (optional keys)
+
+These add real data when you supply a key in SETTINGS (or an env var); until
+then the module is **dormant** and shown as "needs API key" in the ARSENAL and
+PLAN — a stored-but-unused key is never pretended to work.
+
+| Module | Input | Needs | Env var | What it adds |
+|---|---|---|---|---|
+| Shodan (host API) | IP | Shodan API key | `UNISINT_SHODAN_API_KEY` | open ports, service banners/versions, known CVEs, org/ASN (richer than the keyless InternetDB module) |
+| Have I Been Pwned | email | HIBP API key | `UNISINT_HIBP_API_KEY` | the **names + metadata** of breaches the address appears in — *never passwords or breached contents* |
+| Hunter.io | domain | Hunter key | `UNISINT_HUNTER_API_KEY` | public email addresses published for the domain (shown as candidates, with sources) |
+| VirusTotal | domain / IP | VT API key | `UNISINT_VIRUSTOTAL_API_KEY` | reputation (malicious/suspicious engine counts) + passive-DNS records |
+
+Each reports its run honestly: a bad key is `auth_error`, throttling is
+`rate_limited`, nothing found is `empty`. Env-provided keys are never written to
+disk; file keys are mode 0600 and redacted from logs. Use only on targets you
+own or are authorized to investigate.
+
 ## Architecture
 
 - `unisint/engine.py` — async entity graph, provenance-preserving de-dup, streaming.
