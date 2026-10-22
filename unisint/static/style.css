@@ -167,6 +167,9 @@ small{color:var(--dim)}
 .keys span{min-width:110px;color:var(--dim)}
 .keys input{flex:1;background:#000;border:1px solid var(--dim);color:var(--fg);
   padding:6px 8px;font-family:var(--font)}
+.keys-group{color:var(--amber);font-size:11px;letter-spacing:1px;text-transform:uppercase;
+  margin-top:8px;border-bottom:1px solid var(--mut);padding-bottom:3px}
+.keys-group:first-child{margin-top:0}
 .cases{display:grid;gap:4px;max-width:620px}
 .case-row{font-size:12px;color:var(--dim);border-bottom:1px dashed var(--mut);
   padding:4px 0}

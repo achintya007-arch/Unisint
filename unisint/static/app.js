@@ -659,12 +659,23 @@
   }
 
   /* ---------- SETTINGS ---------- */
-  const KEY_NAMES = [['brave', 'Brave Search API key'], ['google_cse_key', 'Google Programmable Search key'], ['google_cse_cx', 'Google search engine ID (cx)']];
+  const KEY_NAMES = [
+    ['#', 'Search providers — enable real web search'],
+    ['brave', 'Brave Search API key'],
+    ['google_cse_key', 'Google Programmable Search key'],
+    ['google_cse_cx', 'Google search engine ID (cx)'],
+    ['#', 'Enrichment APIs — richer data per target'],
+    ['shodan', 'Shodan API key — IP ports / services / CVEs'],
+    ['hibp', 'Have I Been Pwned key — email breach names'],
+    ['hunter', 'Hunter.io key — public emails for a domain'],
+    ['virustotal', 'VirusTotal key — domain / IP reputation'],
+  ];
   async function loadConfig() {
     const d = await (await fetch('/api/config')).json();
     const src = d.key_sources || {};
     const root = $('#keys'); root.replaceChildren();
     KEY_NAMES.forEach(([k, label]) => {
+      if (k === '#') { root.appendChild(el('div', 'keys-group', label)); return; }
       const lab = el('label'); lab.appendChild(el('span', null, label));
       const inp = el('input'); inp.type = 'password'; inp.dataset.key = k; inp.autocomplete = 'off';
       if (src[k] === 'env') { inp.disabled = true; inp.placeholder = 'set via environment variable'; }
