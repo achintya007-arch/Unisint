@@ -101,13 +101,19 @@ Extra tool locations can be added with `UNISINT_TOOL_PATHS=/dir1:/dir2`.
 1. Pick **SELF-AUDIT** or **RECON**.
 2. Paste anything (username, email, phone, domain, IP) — the type is
    auto-detected — or drop an image.
-3. Choose **QUICK / STANDARD / DEEP** and hit **ENGAGE**.
+3. Choose **QUICK / STANDARD / DEEP**. As you type, a **PLAN** panel previews
+   exactly what that run would do: which sources will run, which need
+   credentials, which are unavailable, and which do *active* probing (⚡) and
+   need in-scope authorization — before you commit. Hit **ENGAGE**.
 4. Watch the live feed and graph. Click any node to open or inspect it.
-5. Review the **DOSSIER**. In SELF-AUDIT mode it ends with a
-   **REMEDIATION // FIX THIS** section: per-account lock-down links, how to
-   rotate an email leaked in public commits, how to scrub photo GPS, and
-   data-broker opt-out links. Check the **MAP** for geolocated findings, and
-   **EXPORT** JSON, CSV, or a standalone HTML report.
+5. Review the **DOSSIER**. A filter bar narrows it by type, source, validation
+   state or evidence strength (the graph dims to match); every source shows its
+   run status with a **RETRY** control if it failed or was throttled. In
+   SELF-AUDIT mode the dossier ends with a **REMEDIATION // FIX THIS** section:
+   per-account lock-down links, how to rotate an email leaked in public
+   commits, how to scrub photo GPS, and data-broker opt-out links. Check the
+   **MAP** for geolocated findings, and **EXPORT** JSON, CSV, or a standalone
+   HTML report.
 
 ## How to read results
 
@@ -133,10 +139,22 @@ UNISINT separates **what a source observed** from **what that means**:
   candidate and **SCAN AS SEED** only if it's yours.
 - **Pivots are bounded**: only seeds and strong links expand; names,
   candidates and same-handle matches are recorded, not expanded. Every
-  expand/skip decision has a stated reason (dossier → PIVOTS). RECON only
-  actively probes the seed domain, its subdomains and the IPs they resolve to.
-- **Module status** is honest: `ok` (found something), `empty` (ran, found
-  nothing), `error` (failed — with the reason), `unavailable`.
+  expand/skip decision has a stated reason (dossier → PIVOTS).
+- **Scope is one central policy** (`unisint/scope.py`). RECON only *actively*
+  probes the seed domain, its subdomains and the IPs they resolve to; every
+  active probe is re-authorized at connect time (defeating DNS-rebinding /
+  TOCTOU), rides the SSRF guard as a last line, and each allow/deny is written
+  to an audit trail shown in the dossier's **ACTIVE-PROBE SCOPE** section. A
+  discovered third-party host is recorded, never touched.
+- **Source status** is honest and uses one vocabulary: `ok`, `empty` (ran,
+  found nothing), `partial`, `error` (with the reason), `blocked`,
+  `rate_limited`, `auth_error`, `timeout`, `not_configured` (needs a key),
+  `unavailable` (needs a tool), `skipped`. Each source also reports whether it
+  actually **contacted** the origin, whether the run was **live** (not
+  fixture-backed), how many findings it produced and whether results were
+  **truncated** — a process exiting 0 is never mistaken for success. A failed
+  or throttled source can be re-run on its own with **RETRY** (no full
+  re-scan).
 
 Exports (JSON / evidence CSV / HTML report) are produced from the same
 dossier the UI shows.
@@ -175,7 +193,9 @@ Keys live in `~/.unisint/config.json` (mode 0600) and are redacted from logs.
 ## Architecture
 
 - `unisint/engine.py` — async entity graph, provenance-preserving de-dup, streaming.
-- `unisint/pivot.py` — pivot policy, scope guard and limits.
+- `unisint/scope.py` — central scope policy: target classification, execution-time re-authorization, audit trail.
+- `unisint/planner.py` — the pre-run PLAN preview (what will run / needs keys / needs authorization).
+- `unisint/pivot.py` — pivot policy and limits (consults the scope policy).
 - `unisint/urls.py` — URL normalisation, SSRF guard, link validation.
 - `unisint/search/` — query templates, search-API providers, dedup.
 - `unisint/resolve.py` — explainable labels (supports / conflicts / unknown).

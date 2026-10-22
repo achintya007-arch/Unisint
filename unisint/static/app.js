@@ -29,7 +29,7 @@
 
   /* ---------- BOOT ---------- */
   const BOOT = [
-    'UNISINT v2.0 .... OK',
+    'UNISINT v3.0 .... OK',
     'loading evidence engine .............. OK',
     'arming SSRF guard .................... OK',
     'loading pivot policy ................. OK',

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unisint"
-version = "2.0.0"
+version = "3.0.0"
 description = "Unified OSINT console for self-audit and authorized recon, with a movie-hacker web UI."
 readme = "README.md"
 requires-python = ">=3.10"

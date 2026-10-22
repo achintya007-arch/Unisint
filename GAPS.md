@@ -28,6 +28,23 @@ to `~/.unisint/gaps.md`).
 - [ ] **CVE enrichment** — show severity/summary, not just the CVE id.
 - [ ] **Reverse image search** — currently links only (manual upload).
 
+## Shipped (v3.0)
+- **Central scope policy** (`scope.py`): one engine classifies every target
+  (seed / in-scope / discovered / unresolved / unsafe), re-authorizes each
+  active probe at connect time (DNS-rebinding / TOCTOU defence) over the SSRF
+  guard, and records an audit trail surfaced in the dossier.
+- **Investigation PLAN preview** (`planner.py`, `/api/plan`): before ENGAGE,
+  shows per source whether it will run / needs credentials / is unavailable /
+  needs authorization / is active.
+- **Source-run contract + status vocabulary**: ok / empty / partial / error /
+  blocked / rate_limited / auth_error / unavailable / not_configured / timeout
+  / skipped, plus contacted / live-vs-fixture / truncated / findings per run.
+  A failed or throttled source can be re-run alone via **RETRY**
+  (`/api/rerun-source`) — no full re-scan.
+- **Graph/dossier view filters**: filter by type / source / validation state /
+  evidence strength; graph dims to match; a legend and self-explaining empty
+  states.
+
 ## Shipped (v2.1)
 - Per-source upstream status for theHarvester (structured JSONL) and
   subfinder (-stats table): error / partial / empty / ok.

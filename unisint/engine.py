@@ -21,7 +21,7 @@ from .scope import ScopePolicy
 
 EventCb = Callable[[dict[str, Any]], Awaitable[None]]
 
-USER_AGENT = "UNISINT/2.0 (+public-source research)"
+USER_AGENT = "UNISINT/3.0 (+public-source research)"
 
 # Heuristic sort weight per basis — for ordering only, never shown as a
 # probability. Corroboration is reported as a count of independent sources.
